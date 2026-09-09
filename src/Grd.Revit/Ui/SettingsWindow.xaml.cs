@@ -133,7 +133,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.TypeParamsEvent;
                 if (handler == null || ev == null)
                 {
-                    MessageBox.Show("Обработчик типовых параметров не доступен.", "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Обработчик типовых параметров не доступен.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
@@ -150,7 +150,7 @@ namespace GrdRevit.Ui
                     {
                         if (!string.IsNullOrEmpty(result.Error))
                         {
-                            var td = new Autodesk.Revit.UI.TaskDialog("ГрД: типовые параметры")
+                            var td = new Autodesk.Revit.UI.TaskDialog("Audytor: типовые параметры")
                             {
                                 MainInstruction = "Не удалось прочитать типовые параметры.",
                                 MainContent = result.Error,
@@ -186,7 +186,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("OnTypeParamSelected: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "ГрД: типовые параметры",
+                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: типовые параметры",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -215,7 +215,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.PickEvent;
                 if (ev == null || RevitContext.PickHandler == null)
                 {
-                    MessageBox.Show("Обработчик чтения типа не доступен.", "ГрД: чтение типа",
+                    MessageBox.Show("Обработчик чтения типа не доступен.", "Audytor: чтение типа",
                         MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
@@ -229,7 +229,7 @@ namespace GrdRevit.Ui
                         if (!result.Ok)
                         {
                             GrdLog.Log("OnPickTypeFromSelection: NO - " + result.Error);
-                            var td = new Autodesk.Revit.UI.TaskDialog("ГрД: чтение типа семейства")
+                            var td = new Autodesk.Revit.UI.TaskDialog("Audytor: чтение типа семейства")
                             {
                                 MainInstruction = "Не удалось прочитать семейство выделенного элемента.",
                                 MainContent = result.Error ?? "Неизвестная ошибка.",
@@ -266,7 +266,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("OnPickTypeFromSelection: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "ГрД: чтение типа",
+                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: чтение типа",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -278,7 +278,7 @@ namespace GrdRevit.Ui
             grid.CommitEdit(DataGridEditingUnit.Row, true);
             if (grid.SelectedItems.Count == 0)
             {
-                MessageBox.Show("Выделите строки для удаления.", "ГрД", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Выделите строки для удаления.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 

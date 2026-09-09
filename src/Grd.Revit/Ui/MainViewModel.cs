@@ -181,7 +181,7 @@ namespace GrdRevit.Ui
 
                 var dlg = new Microsoft.Win32.OpenFileDialog
                 {
-                    Filter = "Расчётные файлы ГрД (*.grd;*.grr)|*.grd;*.grr|Все файлы (*.*)|*.*",
+                    Filter = "Расчётные файлы Audytor (*.grd;*.grr)|*.grd;*.grr|Все файлы (*.*)|*.*",
                     Title = "Выберите файл .grd (или результаты .grr)"
                 };
                 if (!string.IsNullOrEmpty(RevitContext.Settings.LastGrdPath))
@@ -201,7 +201,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadFile: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -223,7 +223,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -277,7 +277,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadRoomsRadiators: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -312,7 +312,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -339,7 +339,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadValveSettings: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -361,7 +361,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -373,13 +373,13 @@ namespace GrdRevit.Ui
                 if (_valveSettings.Count == 0)
                 {
                     MessageBox.Show("Сначала загрузите файл настроек клапанов (Load Valve Settings).",
-                        "ГрД", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        "Audytor", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 if (_allRows.Count == 0)
                 {
                     MessageBox.Show("Сначала загрузите помещения и радиаторы (Load Rooms and Radiators).",
-                        "ГрД", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        "Audytor", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
@@ -397,7 +397,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("FillValveSettings: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -434,7 +434,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("OpenSettings: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка открытия настроек: " + ex.Message, "ГрД",
+                MessageBox.Show("Ошибка открытия настроек: " + ex.Message, "Audytor",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -449,7 +449,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.ApplyEvent;
                 if (ev == null)
                 {
-                    MessageBox.Show("Обработчик применения не доступен.", "ГрД", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Обработчик применения не доступен.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
                 GrdLog.Log("ApplyRow: ставим в очередь " + row.Code);
@@ -462,7 +462,7 @@ namespace GrdRevit.Ui
                 // Ни одно исключение не должно вылетать в диспетчер WPF:
                 // необработанная ошибка на потоке Revit = "непоправимая ошибка".
                 GrdLog.Log("ApplyRow: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "ГрД: применение типа",
+                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: применение типа",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

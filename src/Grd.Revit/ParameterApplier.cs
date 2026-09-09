@@ -200,7 +200,7 @@ namespace GrdRevit.Revit
             {
                 var pp = FindParam();
                 if (pp == null) throw new InvalidOperationException("параметр не найден после применения");
-                using (var t = new Transaction(doc, "ГрД: коррекция значения"))
+                using (var t = new Transaction(doc, "Audytor: коррекция значения"))
                 {
                     t.Start();
                     if (!pp.Set(next)) throw new InvalidOperationException("Set(bool) вернул false");

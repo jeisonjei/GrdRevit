@@ -31,7 +31,7 @@ namespace GrdRevit.Revit
                 ElementId appliedId = ElementId.InvalidElementId;
                 string result;
 
-                using (var t = new Transaction(doc, "ГрД: применить тип прибора"))
+                using (var t = new Transaction(doc, "Audytor: применить тип прибора"))
                 {
                     try
                     {

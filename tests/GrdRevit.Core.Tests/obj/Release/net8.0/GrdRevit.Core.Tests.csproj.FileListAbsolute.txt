@@ -99,3 +99,4 @@ C:\Users\user\Documents\GrdRevit\tests\GrdRevit.Core.Tests\obj\Release\net8.0\re
 C:\Users\user\Documents\GrdRevit\tests\GrdRevit.Core.Tests\obj\Release\net8.0\GrdRevit.Core.Tests.pdb
 C:\Users\user\Documents\GrdRevit\tests\GrdRevit.Core.Tests\obj\Release\net8.0\GrdRevit.Core.Tests.genruntimeconfig.cache
 C:\Users\user\Documents\GrdRevit\tests\GrdRevit.Core.Tests\obj\Release\net8.0\ref\GrdRevit.Core.Tests.dll
+C:\Users\user\Documents\GrdRevit\tests\GrdRevit.Core.Tests\obj\Release\net8.0\GrdRevit.Core.Tests.sourcelink.json

@@ -80,7 +80,7 @@ namespace GrdRevit
                 MainWindow.Instance = null;
                 try
                 {
-                    MessageBox.Show(ex.Message, "ГрД: ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show(ex.Message, "Audytor: ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
                 catch { }
                 return Result.Failed;

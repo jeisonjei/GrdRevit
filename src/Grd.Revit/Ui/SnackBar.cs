@@ -80,14 +80,18 @@ namespace GrdRevit.Ui
         private static void Relayout()
         {
             var wa = SystemParameters.WorkArea;
-            double bottom = wa.Bottom - 16;
+            // Отступ снизу увеличен, чтобы карточка не упиралась в панель задач/нижний край
+            // экрана и не обрезалась.
+            const double bottomMargin = 44;
+            const double rightMargin = 24;
+            double bottom = wa.Bottom - bottomMargin;
             for (int i = _live.Count - 1; i >= 0; i--)
             {
                 var w = _live[i];
                 if (!w.IsLoaded || w.ActualHeight <= 0) continue;
                 bottom -= w.ActualHeight;
-                w.Left = wa.Right - w.ActualWidth - 16;
-                w.Top = bottom;
+                w.Left = wa.Right - w.ActualWidth - rightMargin;
+                w.Top = Math.Max(wa.Top + 4, bottom);
                 bottom -= 8;
             }
         }

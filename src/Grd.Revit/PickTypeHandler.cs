@@ -33,7 +33,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "ГрД: прочитать типы выделенного семейства";
+            return "Audytor: прочитать типы выделенного семейства";
         }
 
         public void Execute(UIApplication app)

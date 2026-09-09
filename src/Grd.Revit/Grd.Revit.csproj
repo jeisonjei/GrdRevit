@@ -32,6 +32,12 @@
     <ProjectReference Include="..\Grd.Core\Grd.Core.csproj" />
   </ItemGroup>
 
+  <!-- Значки кнопки на ленте (ресурсы сборки, не копируются отдельно) -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\plugin16.png" />
+    <EmbeddedResource Include="Resources\plugin32.png" />
+  </ItemGroup>
+
   <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">
     <Reference Include="RevitAPI">

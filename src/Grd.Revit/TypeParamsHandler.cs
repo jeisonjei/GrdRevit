@@ -51,7 +51,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "ГрД: типовые параметры механического оборудования";
+            return "Audytor: типовые параметры механического оборудования";
         }
 
         public void Execute(UIApplication app)

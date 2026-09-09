@@ -29,7 +29,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "ГрД: применить тип прибора";
+            return "Audytor: применить тип прибора";
         }
 
         public void Execute(UIApplication app)
@@ -78,10 +78,10 @@ namespace GrdRevit.Revit
             }
 
             GrdLog.Log("ApplyHandler.Execute: результат: " + result);
-            ShowResult(result);
+            ShowResult(result, row);
         }
 
-        private void ShowResult(string result)
+        private void ShowResult(string result, GrdDevice row)
         {
             bool bad = result.StartsWith("!") || result.StartsWith("Не удалось")
                        || result.StartsWith("Выберите") || result.StartsWith("Нет активного")
@@ -90,7 +90,7 @@ namespace GrdRevit.Revit
             {
                 try
                 {
-                    var td = new TaskDialog("ГрД: применение типа")
+                    var td = new TaskDialog("Audytor: применение типа")
                     {
                         MainInstruction = "Тип не применён.",
                         MainContent = result,
@@ -105,23 +105,40 @@ namespace GrdRevit.Revit
                 return;
             }
 
-            // Успех ничем «не поздравляем» в модальном окне — короткое уведомление
-            // в правом нижнем углу экрана (первая строка результата).
-            string first = string.Empty;
-            foreach (var line in result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                first = line.Trim();
-                break;
-            }
-            if (first.Length > 140) first = first.Substring(0, 137) + "...";
+            // Успех «поздравляем» лёгким уведомлением: применённый тип, мощность и настройка клапана.
             try
             {
-                GrdRevit.Ui.SnackBar.Show("Тип применён: " + first);
+                var sb = new System.Text.StringBuilder("Применено: ");
+
+                var appliedType = ExtractAppliedType(result);
+                sb.Append("Тип: ").Append(appliedType ?? row.FamilyHint ?? row.Code);
+
+                if (row.CapacityW.HasValue)
+                    sb.Append(" | Мощность: ").Append(row.CapacityW.Value.ToString(
+                        "0", System.Globalization.CultureInfo.InvariantCulture)).Append(" Вт");
+
+                if (!string.IsNullOrEmpty(row.ValveSetting))
+                    sb.Append(" | Настройка: ").Append(row.ValveSetting);
+
+                GrdRevit.Ui.SnackBar.Show(sb.ToString());
             }
-            catch
+            catch (Exception ex)
             {
-                // Уведомление не критично; ошибка уже записана в лог выше.
+                GrdLog.Log("ShowResult: уведомление упало, лог выше остаётся источником истины: " + ex);
             }
+        }
+
+        /// <summary>Вытаскивает применённый тип («Семейство :: Тип») из строки результата применения.</summary>
+        private static string ExtractAppliedType(string result)
+        {
+            if (string.IsNullOrEmpty(result)) return null;
+            foreach (var line in result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = line.Trim();
+                if (t.StartsWith("Тип:")) return t.Substring(4).Trim();
+                if (t.StartsWith("Создан:")) return t.Substring(7).Trim();
+            }
+            return null;
         }
     }
 }
