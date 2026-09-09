@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>GrdInstaller</AssemblyName>
+    <RootNamespace>GrdInstaller</RootNamespace>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!-- net48 runs on any Windows (no .NET 8 runtime needed) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Bundle the plugin assemblies built for each Revit flavour -->
+  <ItemGroup Condition="Exists('..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.dll')">
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.dll" LogicalName="GrdInstaller.Revit2024.dll" />
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.Core.dll" LogicalName="GrdInstaller.Revit2024.Core.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.dll')">
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.dll" LogicalName="GrdInstaller.Revit2026.dll" />
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.Core.dll" LogicalName="GrdInstaller.Revit2026.Core.dll" />
+  </ItemGroup>
+
+</Project>

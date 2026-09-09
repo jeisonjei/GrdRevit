@@ -1,0 +1,10 @@
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.csproj.AssemblyReference.cache
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.AssemblyInfoInputs.cache
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.AssemblyInfo.cs
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.csproj.CoreCompileInputs.cache
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevit.Core.deps.json
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevit.Core.dll
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevit.Core.pdb
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\GrdRevit.Core.dll
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\GrdRevit.Core.pdb

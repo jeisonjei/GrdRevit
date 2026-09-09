@@ -1,0 +1,87 @@
+<Window x:Class="GrdRevit.Ui.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки плагина ГрД"
+        Width="760" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <GroupBox DockPanel.Dock="Top" Header="Карта значений прибора -> параметры экземпляра" Margin="0,0,0,8" Padding="4">
+            <StackPanel>
+                <TextBlock Text="Значения из колонок главного окна («Фhl», «Настройка клапана») записываются в указанные ниже параметры экземпляра выбранного оборудования после нажатия «Применить тип»."
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
+                <DataGrid x:Name="ValueMapGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False" CanUserDeleteRows="False"
+                          Height="96" GridLinesVisibility="Horizontal">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Значение прибора" Binding="{Binding Key, Mode=OneWay}" IsReadOnly="True" Width="1*"/>
+                        <DataGridTemplateColumn Header="Параметр экземпляра Revit" Width="2*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Value, Mode=OneWay}"
+                                               VerticalAlignment="Center" Margin="4,0"
+                                               Foreground="{StaticResource TextPrimaryBrush}" FontWeight="Medium"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding DataContext.InstanceParams, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              SelectedItem="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Margin="0"
+                                              ToolTip="Параметр экземпляра, в который будет записано значение прибора"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,6,0,0">
+                    <TextBlock Text="Источники значений фиксированы; выберите параметр экземпляра для каждого."
+                               VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,8,0"/>
+                    <Button Content="Обновить список параметров" Click="OnRefreshValueParams" Padding="8,3"/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox DockPanel.Dock="Top" Header="Сопоставление кода прибора -> имя типа семейства (точная карта)" Margin="0,0,0,8" Padding="4">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="Типовой параметр в «Код»:" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <ComboBox x:Name="TypeParamCombo"
+                              Width="300" MinHeight="22" Margin="6,0,0,0" FontSize="12"
+                              DropDownClosed="OnTypeParamDropDownClosed"
+                              ItemsSource="{Binding TypeParams}"
+                              SelectedItem="{Binding SelectedTypeParam}"
+                              ToolTip="Типовой параметр Revit — его значение будет записано в колонку «Код» для строк с найденным типом"/>
+                </StackPanel>
+                <DataGrid x:Name="ExactMapGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="True" CanUserDeleteRows="True"
+                          Height="230" GridLinesVisibility="Horizontal">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Код (например TPLCPL714T2L)" Binding="{Binding Key, UpdateSourceTrigger=PropertyChanged}" Width="2*"/>
+                        <DataGridTextColumn Header="Имя типа Revit" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="2*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,6,0,0">
+                    <Button Content="Взять из выделенного" Click="OnPickTypeFromSelection" Padding="8,3"
+                            ToolTip="Добавить все типы семейства выделенного в Revit элемента как строки «код = имя типа» (выберите одно механическое оборудование в Revit, затем нажмите эту кнопку)"/>
+                    <Button Content="Добавить" Click="OnAddExact" Margin="6,0,0,0" Padding="8,3"/>
+                    <Button Content="Удалить выделенные" Click="OnRemoveExact" Margin="6,0,0,0" Padding="8,3"/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Сохранить" Width="90" Height="30" Style="{StaticResource PrimaryButtonStyle}" Click="OnSave" Padding="12,0" VerticalContentAlignment="Center"/>
+            <Button Content="Отмена" Width="90" Height="30" Margin="8,0,0,0" IsCancel="True" Click="OnCancel" Padding="12,0" VerticalContentAlignment="Center"/>
+        </StackPanel>
+    </DockPanel>
+</Window>

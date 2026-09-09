@@ -1,0 +1,121 @@
+<Window x:Class="GrdRevit.Ui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GrdRevit.Ui"
+        Title="ГрД — отопительные приборы (СО)"
+        Width="860" Height="700" MinWidth="700" SizeToContent="Width"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="EdgeButtonStyle" TargetType="Button" BasedOn="{StaticResource GhostButtonStyle}"/>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="8">
+            <WrapPanel Orientation="Horizontal" MaxWidth="830">
+                <Button Content="Загрузить .grd" Padding="12,5" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding LoadCommand}" />
+                <Button Content="Load Rooms and Radiators..." Padding="12,5" Margin="8,0,0,0" Style="{StaticResource GhostButtonStyle}" Command="{Binding LoadRoomsRadiatorsCommand}" />
+                <Button Content="Load Valve Settings" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource GhostButtonStyle}" Command="{Binding LoadValveSettingsCommand}" />
+                <Button Content="Fill valve settings column" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource GhostButtonStyle}" Command="{Binding FillValveSettingsCommand}" />
+                <Button Content="Настройки..." Padding="12,5" Margin="8,0,0,0" Style="{StaticResource GhostButtonStyle}" Command="{Binding SettingsCommand}" />
+                <Button Content="Очистить таблицу" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource GhostButtonStyle}" Command="{Binding ClearCommand}" />
+                <TextBlock Text="Поиск по помещению:" VerticalAlignment="Center" Margin="24,0,6,0" Foreground="{StaticResource TextSecondaryBrush}" />
+                <TextBox Width="220" VerticalContentAlignment="Center" Padding="6,3"
+                         Text="{Binding RoomFilter, UpdateSourceTrigger=PropertyChanged}" />
+            </WrapPanel>
+        </DockPanel>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock>
+                    <TextBlock.Text>
+                        <MultiBinding StringFormat="{}{0}">
+                            <Binding Path="SelectionOk"
+                                     Converter="{x:Static local:BoolToHintConverter.Instance}" />
+                        </MultiBinding>
+                    </TextBlock.Text>
+                </TextBlock>
+            </StatusBarItem>
+            <StatusBarItem DockPanel.Dock="Right">
+                <TextBlock Text="{Binding FileInfo}" TextTrimming="CharacterEllipsis"
+                           Foreground="#555" MaxWidth="500" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <TabControl x:Name="Tabs" Margin="8,0,8,8">
+            <!-- Главная вкладка: отопительные приборы СО -->
+            <TabItem Header="Отопительные приборы СО" IsSelected="True">
+                <Grid>
+                    <DataGrid x:Name="DevicesGrid"
+                              ItemsSource="{Binding Rows}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="False"
+                              EnableRowVirtualization="True"
+                              SelectionMode="Single"
+                              CanUserAddRows="False"
+                              HorizontalAlignment="Left"
+                              GridLinesVisibility="Horizontal"
+                              AlternatingRowBackground="#F5F8FC"
+                              LoadingRow="OnLoadingRow">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsTypeMissing}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource WarnBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Комната" Binding="{Binding Room}" Width="140" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Код" Binding="{Binding Code, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+                            <DataGridTextColumn Header="Тип" Binding="{Binding Family}" Width="190" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Фhl, Вт" Binding="{Binding Fhl, UpdateSourceTrigger=PropertyChanged}" Width="60" />
+                            <DataGridTextColumn Header="Настройка клапана" Binding="{Binding ValveSetting, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                            <DataGridTemplateColumn Header="Применить" Width="120">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Применить тип"
+                                                Command="{Binding DataContext.ApplyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                IsEnabled="{Binding IsApplyEnabled}"
+                                                Padding="8,3" Margin="4,2" Style="{StaticResource PrimaryButtonStyle}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <!-- Вкладка Valve Settings: настройки клапанов из valve-settings.txt -->
+            <TabItem Header="Valve Settings">
+                <Grid>
+                    <DataGrid x:Name="ValveGrid"
+                              ItemsSource="{Binding ValveRows}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              EnableRowVirtualization="True"
+                              CanUserAddRows="False"
+                              GridLinesVisibility="Horizontal"
+                              AlternatingRowBackground="#F5F8FC">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Помещение" Binding="{Binding Room}" Width="*" />
+                            <DataGridTextColumn Header="Диаметр" Binding="{Binding Diameter}" Width="80" />
+                            <DataGridTextColumn Header="Код прибора" Binding="{Binding DeviceCode}" Width="130" />
+                            <DataGridTextColumn Header="Настройка клапана" Binding="{Binding Setting}" Width="110" />
+                            <DataGridTextColumn Header="Kv" Binding="{Binding Kv}" Width="80" />
+                            <DataGridTextColumn Header="Мощность, Вт" Binding="{Binding PowerW}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
