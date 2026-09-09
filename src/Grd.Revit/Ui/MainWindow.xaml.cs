@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -82,7 +83,30 @@ namespace GrdRevit.Ui
             try { _watcher?.Dispose(); } catch { }
             _watcher = null;
             base.OnClosed(e);
+
+            // Закрытие WPF-окна иногда «оставляет» Revit свёрнутым в панели задач:
+            // Windows отдаёт активацию служебному окну вместо главного окна Revit.
+            // Принудительно восстанавливаем и поднимаем главное окно Revit.
+            var h = RevitContext.MainWindowHandle;
+            if (h == IntPtr.Zero) return;
+            try
+            {
+                if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+                SetForegroundWindow(h);
+            }
+            catch { }
         }
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        private const int SW_RESTORE = 9;
     }
 
     public sealed class BoolToHintConverter : IValueConverter

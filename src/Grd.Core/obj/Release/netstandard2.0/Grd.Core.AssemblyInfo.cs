@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GrdRevit.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9c96193513a2c0cff9287dec25b929ba60ccf0ef")]
 [assembly: System.Reflection.AssemblyProductAttribute("GrdRevit.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GrdRevit.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -9,6 +9,14 @@ namespace GrdRevit
         public static UIApplication UiApp;
         public static Autodesk.Revit.DB.Document Doc => UiApp?.ActiveUIDocument?.Document;
 
+        /// <summary>
+        /// Главное окно Revit. Для владения окнами плагина: берём из API
+        /// (UIApplication.MainWindowHandle), не из Process.MainWindowHandle —
+        /// последний может вернуть ноль или служебное окно, и тогда при закрытии
+        /// окна плагина Windows «сворачивает» Revit в панель задач.
+        /// </summary>
+        public static IntPtr MainWindowHandle { get; private set; }
+
         public static string SettingsPath()
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -65,6 +73,20 @@ namespace GrdRevit
             try
             {
                 UiApp = app;
+                try
+                {
+                    MainWindowHandle = app != null ? app.MainWindowHandle : IntPtr.Zero;
+                }
+                catch
+                {
+                    MainWindowHandle = IntPtr.Zero;
+                }
+                if (MainWindowHandle == IntPtr.Zero)
+                {
+                    try { MainWindowHandle = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle; }
+                    catch { MainWindowHandle = IntPtr.Zero; }
+                }
+                GrdLog.Log("Init:1a MainWindowHandle=0x" + MainWindowHandle.ToString("X"));
                 GrdLog.Log("Init:1 UiApp set; InstanceParams.Count=" + (Settings?.InstanceParams?.Count ?? -1) +
                            ", LastGrdPath.Length=" + (Settings?.LastGrdPath?.Length ?? -1));
                 if (Settings == null || Settings.InstanceParams.Count == 0 && Settings.LastGrdPath.Length == 0)

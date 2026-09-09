@@ -8,3 +8,4 @@ C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevi
 C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevit.Core.pdb
 C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\GrdRevit.Core.dll
 C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\GrdRevit.Core.pdb
+C:\Users\user\Documents\GrdRevit\src\Grd.Core\obj\Release\netstandard2.0\Grd.Core.sourcelink.json

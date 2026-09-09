@@ -21,3 +21,4 @@ C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\refint
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\GrdRevit.pdb
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\ref\GrdRevit.dll
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\Themes\Modern.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Grd.Revit.sourcelink.json

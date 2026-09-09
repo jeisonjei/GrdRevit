@@ -52,10 +52,14 @@ namespace GrdRevit
                 if (!window.IsVisible)
                 {
                     GrdLog.Log("S6: parenting to Revit main window");
+                    var revitHandle = RevitContext.MainWindowHandle;
+                    // Владение (owner) обязательно задаём ДО Show(): при закрытии окна
+                    // Windows возвращает активацию владельцу, а не «сворачивает» Revit.
                     new WindowInteropHelper(window)
                     {
-                        Owner = Process.GetCurrentProcess().MainWindowHandle
+                        Owner = revitHandle
                     };
+                    GrdLog.Log("S6b: owner set to 0x" + revitHandle.ToString("X"));
                     GrdLog.Log("S7: Show()");
                     window.Show();
                     MainWindow.Instance = window;
