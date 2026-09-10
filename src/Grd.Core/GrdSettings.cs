@@ -38,6 +38,12 @@ namespace GrdRevit.Core
         /// <summary>Путь к файлу настроек клапанов (valve-settings.txt).</summary>
         public string LastValveSettingsPath { get; set; } = string.Empty;
 
+        /// <summary>Путь к последнему загруженному файлу общих параметров Revit (.txt).</summary>
+        public string LastSharedParamsPath { get; set; } = string.Empty;
+
+        /// <summary>Определения общих параметров из последнего загруженного файла (для восстановления при запуске).</summary>
+        public List<SharedParamDef> SharedParamDefs { get; set; } = new List<SharedParamDef>();
+
         public static GrdSettings Load(string path)
         {
             try

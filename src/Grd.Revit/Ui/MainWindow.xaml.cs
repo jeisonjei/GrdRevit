@@ -22,9 +22,15 @@ namespace GrdRevit.Ui
             _vm.FileDialogOwner = this;
             DataContext = _vm;
 
-            var doc = LoadSavedOrDefault();
-            if (doc != null)
-                _vm.SetDocument(doc);
+            // Если сохранены «помещения и радиаторы»/«настройки клапанов» — восстанавливаем
+            // их; они живут, пока пользователь не очистит таблицы или не перезагрузит файлы.
+            // Иначе, на всякий случай, подхватываем последний загруженный .grd.
+            if (!_vm.RestoreSaved())
+            {
+                var doc = LoadSavedOrDefault();
+                if (doc != null)
+                    _vm.SetDocument(doc);
+            }
 
             try
             {

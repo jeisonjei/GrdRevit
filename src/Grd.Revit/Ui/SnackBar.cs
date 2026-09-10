@@ -21,6 +21,7 @@ namespace GrdRevit.Ui
     {
         private static readonly List<ToastWindow> _live = new List<ToastWindow>();
         private static Dispatcher _dispatcher;
+        private static DispatcherTimer _layoutTimer;
         private const int MaxVisible = 3;
 
         public static void Show(string message, SnackBarKind kind = SnackBarKind.Success)
@@ -76,13 +77,35 @@ namespace GrdRevit.Ui
             win.Show();
         }
 
+        /// <summary>
+        /// Отложенный пересчёт позиций: Window может изменить свой размер после первого
+        /// показа (перетекание текста в многострочное уведомление), из-за чего нижний
+        /// край уходит под рабочий стол и обрезается. Переставляем окна, как только
+        /// новый размер устаканился.
+        /// </summary>
+        internal static void RescheduleLayout()
+        {
+            if (_live.Count == 0) return;
+            if (_layoutTimer == null)
+            {
+                _layoutTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+                _layoutTimer.Tick += (s, e) =>
+                {
+                    _layoutTimer.Stop();
+                    Relayout();
+                };
+            }
+            _layoutTimer.Stop();
+            _layoutTimer.Start();
+        }
+
         /// <summary>Ставит все видимые уведомления в правый нижний угол рабочего стола стопкой снизу вверх.</summary>
         private static void Relayout()
         {
             var wa = SystemParameters.WorkArea;
             // Отступ снизу увеличен, чтобы карточка не упиралась в панель задач/нижний край
             // экрана и не обрезалась.
-            const double bottomMargin = 44;
+            const double bottomMargin = 48;
             const double rightMargin = 24;
             double bottom = wa.Bottom - bottomMargin;
             for (int i = _live.Count - 1; i >= 0; i--)
@@ -115,6 +138,9 @@ namespace GrdRevit.Ui
             Focusable = false;
             SnapsToDevicePixels = true;
             Opacity = 0;
+            // Окно может вырасти после первого рендера (многострочный текст) — тогда
+            // нижний край уходит за рабочий стол. Переставляем его при любом layout-обновлении.
+            LayoutUpdated += (s, e) => SnackBar.RescheduleLayout();
 
             Color bg, accent;
             string icon;
@@ -142,8 +168,6 @@ namespace GrdRevit.Ui
                 Background = new SolidColorBrush(bg),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(16, 12, 16, 12),
-                RenderTransformOrigin = new Point(0.5, 1),
-                RenderTransform = new TranslateTransform(0, 24),
             };
 
             border.MouseLeftButtonDown += (s, e) => BeginFadeOut();
@@ -193,9 +217,6 @@ namespace GrdRevit.Ui
 
         private void BeginFadeIn()
         {
-            if (RenderTransform is TranslateTransform translate)
-                translate.BeginAnimation(TranslateTransform.YProperty,
-                    new DoubleAnimation(24, 0, TimeSpan.FromMilliseconds(180)));
             BeginAnimation(OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
         }

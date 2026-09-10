@@ -23,6 +23,13 @@ namespace GrdRevit
             return System.IO.Path.Combine(appData, "GrdRevit", "settings.json");
         }
 
+        /// <summary>Файл снимка рабочего состояния (загруженные приборы, клапаны, правки).</summary>
+        public static string DataPath()
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            return System.IO.Path.Combine(appData, "GrdRevit", "data.json");
+        }
+
         public static Core.GrdSettings Settings = new Core.GrdSettings();
 
         /// <summary>Маршалит применение типа прибора в API-контекст (кнопка моделесс-окна его не может).</summary>
@@ -39,6 +46,16 @@ namespace GrdRevit
         public static Revit.TypeParamsHandler TypeParamsHandler;
         private static Autodesk.Revit.UI.ExternalEvent _typeParamsEvent;
         public static Autodesk.Revit.UI.ExternalEvent TypeParamsEvent => _typeParamsEvent;
+
+        /// <summary>Маршалит чтение семейств и общих параметров для окна «Параметры семейств».</summary>
+        public static Revit.FamilyInfoHandler FamilyInfoHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _familyInfoEvent;
+        public static Autodesk.Revit.UI.ExternalEvent FamilyInfoEvent => _familyInfoEvent;
+
+        /// <summary>Маршалит применение операций с параметрами к семействам.</summary>
+        public static Revit.FamilyParamsHandler FamilyParamsHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _familyParamsEvent;
+        public static Autodesk.Revit.UI.ExternalEvent FamilyParamsEvent => _familyParamsEvent;
 
         /// <summary>
         /// Создаёт ExternalEvent-обработчики. Допустимо ТОЛЬКО в контексте стандартного
@@ -64,6 +81,18 @@ namespace GrdRevit
                 TypeParamsHandler = new Revit.TypeParamsHandler();
                 _typeParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(TypeParamsHandler);
                 GrdLog.Log("EnsureHandlers: TypeParamsEvent created");
+            }
+            if (_familyInfoEvent == null)
+            {
+                FamilyInfoHandler = new Revit.FamilyInfoHandler();
+                _familyInfoEvent = Autodesk.Revit.UI.ExternalEvent.Create(FamilyInfoHandler);
+                GrdLog.Log("EnsureHandlers: FamilyInfoEvent created");
+            }
+            if (_familyParamsEvent == null)
+            {
+                FamilyParamsHandler = new Revit.FamilyParamsHandler();
+                _familyParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(FamilyParamsHandler);
+                GrdLog.Log("EnsureHandlers: FamilyParamsEvent created");
             }
         }
 

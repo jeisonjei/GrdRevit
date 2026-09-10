@@ -36,6 +36,8 @@
   <ItemGroup>
     <EmbeddedResource Include="Resources\plugin16.png" />
     <EmbeddedResource Include="Resources\plugin32.png" />
+    <EmbeddedResource Include="Resources\params16.png" />
+    <EmbeddedResource Include="Resources\params32.png" />
   </ItemGroup>
 
   <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->

@@ -15,6 +15,9 @@ namespace GrdRevit.Ui
     {
         public GrdDevice Source;
 
+        /// <summary>Вызывается при изменении данных строки (для сохранения снимка).</summary>
+        public Action Changed;
+
         public string Room => string.IsNullOrEmpty(Source.Room) ? "(без помещения)" : Source.Room;
 
         public string Code
@@ -30,6 +33,7 @@ namespace GrdRevit.Ui
                     OnPropertyChanged(nameof(Family));
                     OnPropertyChanged(nameof(Reason));
                     OnPropertyChanged(nameof(IsTypeMissing));
+                    Changed?.Invoke();
                 }
             }
         }
@@ -65,6 +69,7 @@ namespace GrdRevit.Ui
                 {
                     Source.CapacityW = w;
                     OnPropertyChanged(nameof(Fhl));
+                    Changed?.Invoke();
                 }
             }
         }
@@ -72,7 +77,10 @@ namespace GrdRevit.Ui
         public string ValveSetting
         {
             get => Source.ValveSetting;
-            set => Set(ref Source.ValveSetting, value);
+            set
+            {
+                if (Set(ref Source.ValveSetting, value)) Changed?.Invoke();
+            }
         }
 
         /// <summary>Причина отсутствия кода/типа (пустая строка, если тип найден).</summary>
@@ -156,6 +164,10 @@ namespace GrdRevit.Ui
         public List<ValveSettingRow> ValveRows { get; private set; } = new List<ValveSettingRow>();
 
         private List<ValveSettingRow> _valveSettings = new List<ValveSettingRow>();
+
+        private string _roomsSourcePath = string.Empty;
+        private string _valveSourcePath = string.Empty;
+        private bool _valveFilled;
 
         public MainViewModel()
         {
@@ -294,10 +306,13 @@ namespace GrdRevit.Ui
                 _allRows = devices
                     .OrderBy(d => d.Room, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(d => d.Order)
-                    .Select(d => new DeviceRow { Source = d })
+                    .Select(d => new DeviceRow { Source = d, Changed = Persist })
                     .ToList();
                 Rooms = _allRows.Select(r => r.Room).Distinct()
                     .Select((n, i) => new GrdRoom { Name = n, Order = i }).ToList();
+
+                _roomsSourcePath = path;
+                Persist();
 
                 FileInfo = $"{System.IO.Path.GetFileName(path)} — помещений: {Rooms.Count}, приборов: {_allRows.Count}";
 
@@ -353,7 +368,10 @@ namespace GrdRevit.Ui
                 RevitContext.Settings.LastValveSettingsPath = path;
                 RevitContext.SaveSettings();
 
+                _valveSourcePath = path;
+                _valveFilled = false;
                 ValveRows = _valveSettings;
+                Persist();
                 OnPropertyChanged(nameof(ValveRows));
 
                 GrdLog.Log($"LoadValveSettingsPath: {path}, строк {_valveSettings.Count}");
@@ -386,6 +404,9 @@ namespace GrdRevit.Ui
                 int filled = ValveSettingsMatcher.Fill(
                     _allRows.Select(r => r.Source).ToList(), _valveSettings);
 
+                if (filled > 0) _valveFilled = true;
+                Persist();
+
                 RefreshRows();
                 OnPropertyChanged(nameof(Rows));
                 GrdLog.Log($"FillValveSettings: заполнено настроек {filled} из {_allRows.Count}");
@@ -403,15 +424,147 @@ namespace GrdRevit.Ui
 
         private SettingsWindow _settingsWindow;
 
-        /// <summary>Очищает таблицу приборов.</summary>
+        /// <summary>Очищает таблицы приборов и настроек клапанов и удаляет сохранённые данные.</summary>
         public void ClearRows()
         {
             _allRows.Clear();
+            _valveSettings.Clear();
+            ValveRows = _valveSettings;
+            Rooms = new List<GrdRoom>();
+            _roomsSourcePath = string.Empty;
+            _valveSourcePath = string.Empty;
+            _valveFilled = false;
+
             RefreshRows();
             OnPropertyChanged(nameof(Rows));
+            OnPropertyChanged(nameof(Rooms));
+            OnPropertyChanged(nameof(ValveRows));
             FileInfo = "Таблица очищена";
             OnPropertyChanged(nameof(FileInfo));
+
+            SavedDataFile.Delete(RevitContext.DataPath());
             SnackBar.Show("Таблица очищена", SnackBarKind.Info);
+        }
+
+        /// <summary>
+        /// Сохраняет текущее состояние (приборы, помещения, настройки клапанов, правки)
+        /// в файл снимка. Данные восстанавливаются при следующем открытии окна и живут,
+        /// пока пользователь их не очистит или не перезагрузит файлы.
+        /// </summary>
+        private void Persist()
+        {
+            try
+            {
+                var snap = new SavedSnapshot
+                {
+                    RoomsPath = _roomsSourcePath,
+                    ValveSettingsPath = _valveSourcePath,
+                    ValveFilled = _valveFilled,
+                    Devices = _allRows.Select(r => new SavedDevice
+                    {
+                        Room = r.Source.Room,
+                        Code = r.Source.Code,
+                        FamilyHint = r.Source.FamilyHint,
+                        Diameter = r.Source.Diameter,
+                        Connection = r.Source.Connection,
+                        CapacityW = r.Source.CapacityW,
+                        ValveSetting = r.Source.ValveSetting,
+                        MissingReason = r.Source.MissingReason,
+                        Order = r.Source.Order
+                    }).ToList(),
+                    RoomsList = Rooms.Select(rm => new SavedRoom { Name = rm.Name, Order = rm.Order }).ToList(),
+                    ValveRows = _valveSettings.Select(v => new SavedValveRow
+                    {
+                        Room = v.Room,
+                        Diameter = v.Diameter,
+                        DeviceCode = v.DeviceCode,
+                        Setting = v.Setting,
+                        Kv = v.Kv,
+                        PowerW = v.PowerW,
+                        Order = v.Order
+                    }).ToList()
+                };
+                SavedDataFile.Save(RevitContext.DataPath(), snap);
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("Persist: EXCEPTION " + ex);
+            }
+        }
+
+        /// <summary>
+        /// Восстанавливает сохранённое состояние. Возвращает true, если данные были
+        /// загружены (таблицы заполнены); false — таблицы пусты.
+        /// </summary>
+        public bool RestoreSaved()
+        {
+            try
+            {
+                var snap = SavedDataFile.Load(RevitContext.DataPath());
+                if (snap == null || snap.Devices == null || snap.Devices.Count == 0) return false;
+
+                _roomsSourcePath = snap.RoomsPath;
+                _valveSourcePath = snap.ValveSettingsPath;
+                _valveFilled = snap.ValveFilled;
+
+                _allRows = snap.Devices
+                    .OrderBy(d => d.Room, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(d => d.Order)
+                    .Select(d => new DeviceRow
+                    {
+                        Source = new GrdDevice
+                        {
+                            Kind = DeviceKind.RadiatorHeating,
+                            Room = d.Room,
+                            Code = d.Code,
+                            FamilyHint = d.FamilyHint,
+                            Diameter = d.Diameter,
+                            Connection = d.Connection,
+                            CapacityW = d.CapacityW,
+                            ValveSetting = d.ValveSetting,
+                            MissingReason = d.MissingReason,
+                            Order = d.Order
+                        },
+                        Changed = Persist
+                    })
+                    .ToList();
+
+                Rooms = snap.RoomsList != null && snap.RoomsList.Count > 0
+                    ? snap.RoomsList.Select(r => new GrdRoom { Name = r.Name, Order = r.Order }).ToList()
+                    : _allRows.Select(r => r.Room).Distinct()
+                        .Select((n, i) => new GrdRoom { Name = n, Order = i }).ToList();
+
+                _valveSettings = (snap.ValveRows ?? new List<SavedValveRow>())
+                    .Select(v => new ValveSettingRow
+                    {
+                        Room = v.Room,
+                        Diameter = v.Diameter,
+                        DeviceCode = v.DeviceCode,
+                        Setting = v.Setting,
+                        Kv = v.Kv,
+                        PowerW = v.PowerW,
+                        Order = v.Order
+                    }).ToList();
+                ValveRows = _valveSettings;
+
+                FileInfo = $"Сохранённые данные — приборов: {_allRows.Count}";
+
+                RoomFilter = string.Empty;
+                RefreshRows();
+                OnPropertyChanged(nameof(Rows));
+                OnPropertyChanged(nameof(Rooms));
+                OnPropertyChanged(nameof(ValveRows));
+                OnPropertyChanged(nameof(FileInfo));
+
+                GrdLog.Log("RestoreSaved: приборов=" + _allRows.Count + ", клапанов=" + _valveSettings.Count +
+                           ", из " + (snap.RoomsPath.Length > 0 ? snap.RoomsPath : "(менее файлов)"));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("RestoreSaved: EXCEPTION " + ex);
+                return false;
+            }
         }
 
         private void OpenSettings()

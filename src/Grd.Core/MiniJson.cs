@@ -25,9 +25,41 @@ namespace GrdRevit.Core
             sb.Append(',');
             WriteProp(sb, "WrapInTransaction", s.WrapInTransaction ? "true" : "false");
             sb.Append(',');
+            sb.Append(',');
+            WriteProp(sb, "ValueParamMap", WriteDict(s.ValueParamMap));
+            sb.Append(',');
             WriteProp(sb, "LastGrdPath", Quote(Encode(s.LastGrdPath)));
+            sb.Append(',');
+            WriteProp(sb, "LastRoomsPath", Quote(Encode(s.LastRoomsPath)));
+            sb.Append(',');
+            WriteProp(sb, "LastValveSettingsPath", Quote(Encode(s.LastValveSettingsPath)));
+            sb.Append(',');
+            WriteProp(sb, "LastSharedParamsPath", Quote(Encode(s.LastSharedParamsPath)));
+            sb.Append(',');
+            WriteProp(sb, "SharedParamDefs", WriteSharedDefs(s.SharedParamDefs));
             sb.Append('}');
             return sb.ToString();
+        }
+
+        private static string WriteSharedDefs(List<SharedParamDef> defs)
+        {
+            var sb = new StringBuilder("[");
+            bool first = true;
+            foreach (var d in defs)
+            {
+                if (!first) sb.Append(',');
+                sb.Append('{');
+                WriteProp(sb, "Name", Quote(Encode(d.Name)));
+                sb.Append(',');
+                WriteProp(sb, "Guid", Quote(Encode(d.Guid)));
+                sb.Append(',');
+                WriteProp(sb, "Group", Quote(Encode(d.Group)));
+                sb.Append(',');
+                WriteProp(sb, "StorageType", Quote(Encode(d.StorageType)));
+                sb.Append('}');
+                first = false;
+            }
+            return sb.Append(']').ToString();
         }
 
         private static string WriteParam(InstanceParamSetting p)
@@ -99,12 +131,51 @@ namespace GrdRevit.Core
                     s.InstanceParams.Add(p);
                 }
             }
-            if (m.TryGetValue("FamilyNameOverrides", out var f) && f is IList<object> fl) CopyDict(fl, s.FamilyNameOverrides);
-            if (m.TryGetValue("TypeNameExactMap", out var t) && t is IList<object> tl) CopyDict(tl, s.TypeNameExactMap);
+            if (m.TryGetValue("FamilyNameOverrides", out var f)) ReadDict(f, s.FamilyNameOverrides);
+            if (m.TryGetValue("TypeNameExactMap", out var t)) ReadDict(t, s.TypeNameExactMap);
             if (m.TryGetValue("ShowCount", out var sc)) s.ShowCount = GetBool(sc);
             if (m.TryGetValue("WrapInTransaction", out var wt)) s.WrapInTransaction = GetBool(wt);
+            if (m.TryGetValue("ValueParamMap", out var vp)) ReadDict(vp, s.ValueParamMap);
             if (m.TryGetValue("LastGrdPath", out var lp)) s.LastGrdPath = lp as string ?? string.Empty;
+            if (m.TryGetValue("LastRoomsPath", out var rp)) s.LastRoomsPath = rp as string ?? string.Empty;
+            if (m.TryGetValue("LastValveSettingsPath", out var vs)) s.LastValveSettingsPath = vs as string ?? string.Empty;
+            if (m.TryGetValue("LastSharedParamsPath", out var sp)) s.LastSharedParamsPath = sp as string ?? string.Empty;
+            if (m.TryGetValue("SharedParamDefs", out var sd) && sd is IList<object> sdl)
+            {
+                foreach (var item in sdl)
+                {
+                    if (!(item is Dictionary<string, object> dm)) continue;
+                    s.SharedParamDefs.Add(new SharedParamDef
+                    {
+                        Name = ReadStr(dm, "Name"),
+                        Guid = ReadStr(dm, "Guid"),
+                        Group = ReadStr(dm, "Group"),
+                        StorageType = ReadStr(dm, "StorageType")
+                    });
+                }
+            }
             return s;
+        }
+
+        private static string ReadStr(Dictionary<string, object> m, string key)
+        {
+            return m.TryGetValue(key, out var v) ? (v as string) ?? string.Empty : string.Empty;
+        }
+
+        /// <summary>Читает словарь либо из объекта {k:v}, либо из массива [ {k:v}, ... ].</summary>
+        private static void ReadDict(object value, Dictionary<string, string> dst)
+        {
+            if (value is Dictionary<string, object> dm)
+            {
+                foreach (var kv in dm)
+                {
+                    string key = kv.Key;
+                    string val = (kv.Value as string) ?? string.Empty;
+                    if (!string.IsNullOrEmpty(key)) dst[key] = val;
+                }
+                return;
+            }
+            if (value is IList<object> list) CopyDict(list, dst);
         }
 
         private static void CopyDict(IList<object> list, Dictionary<string, string> dst)
@@ -137,6 +208,17 @@ namespace GrdRevit.Core
         // ---------- Парсер ----------
         // Возвращает дерево: Dictionary<string,object> либо IList<object> либо string/bool/double.
         // Для простоты корень конвертируем в "кортеж" [объект].
+
+        /// <summary>
+        /// Разбирает JSON в дерево (Dictionary / IList / string / bool / double).
+        /// Используется для чтения сохранённого снимка данных (SavedDataFile).
+        /// </summary>
+        public static object ParseTree(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+            int i = 0;
+            return ParseValue(json, ref i);
+        }
 
         private static object ParseValue(string j, ref int i)
         {

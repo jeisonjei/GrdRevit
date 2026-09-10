@@ -14,6 +14,7 @@ namespace GrdRevit
         public const string PanelName = "Данные";
 
         private const string ButtonDataName = "GrdRevit.Open";
+        private const string FamilyParamsButtonName = "GrdRevit.FamilyParams";
 
         public Result OnStartup(UIControlledApplication app)
         {
@@ -42,6 +43,25 @@ namespace GrdRevit
                 data.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(data);
+
+                var familyData = new PushButtonData(
+                    FamilyParamsButtonName,
+                    "Параметры\nсемейств",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdFamilyParamsCommand).FullName)
+                {
+                    ToolTip = "Добавить, удалить или изменить привязку (экземпляр/тип) параметров сразу у нескольких семейств активного документа",
+                    LongDescription = "Открывает окно: выберите семейства, добавьте операции «добавить/удалить/изменить привязку» для обычных или общих параметров, " +
+                                      "укажите тип значения и группу, затем нажмите «Применить». " +
+                                      "Операция «Изменить привязку» переключает существующий параметр между экземпляром и типом. " +
+                                      "Файл общих параметров запоминается и восстанавливается при следующем запуске."
+                };
+                familyData.Image = LoadIcon("GrdRevit.Resources.params16.png");
+                familyData.LargeImage = LoadIcon("GrdRevit.Resources.params32.png");
+                familyData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(familyData);
+
                 GrdLog.Log("OnStartup: done");
                 return Result.Succeeded;
             }

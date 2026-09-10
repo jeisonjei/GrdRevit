@@ -134,29 +134,23 @@ namespace GrdRevit.Revit
         }
 
         /// <summary>
-        /// Имена параметров экземпляра механического оборудования: параметры, которые
-        /// встречаются на экземплярах, но НЕ являются типовыми (нет на символах/типах).
-        /// Используются в выпадающих списках настроек («Фhl»/«Valve setting» -> параметр).
+        /// Имена параметров экземпляра, которые могут иметь механическое оборудование
+        /// и его семейства. Собираются из трёх источников:
+        ///  (а) параметры размещённых в проекте экземпляров семейств (кроме типовых);
+        ///  (б) параметры экземпляра из FamilyManager открытого документа семейства
+        ///      (добавлены в редакторе семейств, ещё не размещённые в проекте);
+        ///  (в) параметры проекта с привязкой «экземпляр» из BindingMap документа
+        ///      (добавлены в главном окне Revit через «Параметры проекта»).
+        /// Типовые параметры (есть на символах/типах) исключаются.
         /// </summary>
         private static List<string> CollectInstanceParamNames(Document doc)
         {
             var typeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var sym in Symbols(doc))
-            {
-                try
-                {
-                    foreach (var o in sym.Parameters)
-                    {
-                        var p = o as Parameter;
-                        var n = p?.Definition?.Name;
-                        if (!string.IsNullOrEmpty(n)) typeNames.Add(n);
-                    }
-                }
-                catch { /* пропускаем */ }
-            }
+            CollectSymbolNames(doc, typeNames);
 
             var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            var catMep = new ElementId((int)BuiltInCategory.OST_MechanicalEquipment);
+
+            // (а) параметры размещённых экземпляров семейств (не типовые).
             try
             {
                 var instances = new FilteredElementCollector(doc)
@@ -169,7 +163,6 @@ namespace GrdRevit.Revit
                 {
                     try
                     {
-                        if ((fi.Category?.Id ?? ElementId.InvalidElementId) != catMep) continue;
                         foreach (var o in fi.Parameters)
                         {
                             var p = o as Parameter;
@@ -184,7 +177,59 @@ namespace GrdRevit.Revit
             }
             catch { /* нет экземпляров в документе */ }
 
+            // (б) открытый документ семейства: параметры экземпляра из FamilyManager.
+            try
+            {
+                if (doc.IsFamilyDocument && doc.FamilyManager != null)
+                {
+                    foreach (var fp in doc.FamilyManager.GetParameters())
+                    {
+                        var n = fp?.Definition?.Name;
+                        if (string.IsNullOrEmpty(n)) continue;
+                        if (!fp.IsInstance) continue; // типовой параметр семейства
+                        names.Add(n);
+                    }
+                }
+            }
+            catch { /* семейство недоступно */ }
+
+            // (в) параметры проекта с привязкой «экземпляр» (добавлены в главном окне Revit).
+            try
+            {
+                var bindings = doc.ParameterBindings;
+                if (bindings != null)
+                {
+                    var it = bindings.ForwardIterator();
+                    it.Reset();
+                    while (it.MoveNext())
+                    {
+                        if (!(it.Current is InstanceBinding)) continue;
+                        var n = (it.Key as Definition)?.Name;
+                        if (!string.IsNullOrEmpty(n)) names.Add(n);
+                    }
+                }
+            }
+            catch { /* привязки недоступны */ }
+
             return names.ToList();
+        }
+
+        /// <summary>Имена всех параметров на символах/типах (типовые параметры).</summary>
+        private static void CollectSymbolNames(Document doc, HashSet<string> typeNames)
+        {
+            foreach (var sym in Symbols(doc))
+            {
+                try
+                {
+                    foreach (var o in sym.Parameters)
+                    {
+                        var p = o as Parameter;
+                        var n = p?.Definition?.Name;
+                        if (!string.IsNullOrEmpty(n)) typeNames.Add(n);
+                    }
+                }
+                catch { /* один тип нельзя читать — пропускаем */ }
+            }
         }
 
         /// <summary>

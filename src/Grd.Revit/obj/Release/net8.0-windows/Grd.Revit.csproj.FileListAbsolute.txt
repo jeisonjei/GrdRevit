@@ -22,3 +22,7 @@ C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\GrdRev
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\ref\GrdRevit.dll
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\Themes\Modern.baml
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Grd.Revit.sourcelink.json
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\FamilyParamsWindow.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\FamilyParamsWindow.g.cs
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\SharedParamsPickerWindow.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net8.0-windows\Ui\SharedParamsPickerWindow.g.cs

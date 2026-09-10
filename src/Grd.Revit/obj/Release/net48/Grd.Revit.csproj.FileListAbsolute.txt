@@ -19,3 +19,7 @@ C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\GrdRevit.dll
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\GrdRevit.pdb
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\Themes\Modern.baml
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Grd.Revit.sourcelink.json
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\FamilyParamsWindow.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\FamilyParamsWindow.g.cs
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SharedParamsPickerWindow.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SharedParamsPickerWindow.g.cs
