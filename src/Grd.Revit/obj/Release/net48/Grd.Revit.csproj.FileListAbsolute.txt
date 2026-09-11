@@ -23,3 +23,5 @@ C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\FamilyParams
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\FamilyParamsWindow.g.cs
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SharedParamsPickerWindow.baml
 C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SharedParamsPickerWindow.g.cs
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\InstanceParamsWindow.baml
+C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\InstanceParamsWindow.g.cs

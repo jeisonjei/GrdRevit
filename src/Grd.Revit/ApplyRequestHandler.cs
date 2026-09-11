@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -29,7 +29,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "Audytor: применить тип прибора";
+            return "JTOOLS: применить тип прибора";
         }
 
         public void Execute(UIApplication app)
@@ -90,7 +90,7 @@ namespace GrdRevit.Revit
             {
                 try
                 {
-                    var td = new TaskDialog("Audytor: применение типа")
+                    var td = new TaskDialog("JTOOLS: применение типа")
                     {
                         MainInstruction = "Тип не применён.",
                         MainContent = result,

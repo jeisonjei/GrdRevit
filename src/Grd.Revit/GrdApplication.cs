@@ -8,13 +8,16 @@ namespace GrdRevit
 {
     public class GrdApplication : IExternalApplication
     {
-        public const string ProductName = "Применить данные из Audytor";
+        public const string ProductName = "JTOOLS";
         // Вкладка и панель ленты: короткие подписи; полное название — на кнопке и в окне.
-        public const string TabName = "Audytor";
+        public const string TabName = "JTOOLS";
         public const string PanelName = "Данные";
 
         private const string ButtonDataName = "GrdRevit.Open";
         private const string FamilyParamsButtonName = "GrdRevit.FamilyParams";
+        private const string Box3DButtonName = "GrdRevit.Box3D";
+        private const string InstanceParamsButtonName = "GrdRevit.InstanceParams";
+        private const string SettingsButtonName = "GrdRevit.Settings";
 
         public Result OnStartup(UIControlledApplication app)
         {
@@ -61,6 +64,58 @@ namespace GrdRevit
                 familyData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(familyData);
+
+                var box3dData = new PushButtonData(
+                    Box3DButtonName,
+                    "3D-фрагмент\nиз области",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdBox3DCommand).FullName)
+                {
+                    ToolTip = "Создать 3D-вид-фрагмент по растянутой на плане области с высотой по умолчанию из настроек",
+                    LongDescription = "Нажмите кнопку, затем растяните прямоугольную область мышью на плане этажа. " +
+                                      "Плагин создаст изометрический 3D-вид с границами точно по этой области. " +
+                                      "Высота объёма берётся из настроек плагина (по умолчанию 3 м) — " +
+                                      "изменить можно в отдельной кнопке «Настройки»."
+                };
+                box3dData.Image = LoadIcon("GrdRevit.Resources.box3d16.png");
+                box3dData.LargeImage = LoadIcon("GrdRevit.Resources.box3d32.png");
+                box3dData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(box3dData);
+
+                var instanceData = new PushButtonData(
+                    InstanceParamsButtonName,
+                    "Параметры\nэкземпляра",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdInstanceParamsCommand).FullName)
+                {
+                    ToolTip = "Изменить значения всех параметров выбранного экземпляра семейства без открытия редактора семейства",
+                    LongDescription = "Выделите один экземпляр семейства в проекте и нажмите кнопку. " +
+                                      "Откроется окно со всеми параметрами элемента и типа: параметры экземпляра " +
+                                      "изменяются только у выбранного элемента, параметры типа — у типа, то есть " +
+                                      "у всех экземпляров этого типа. Значения редактируются прямо в таблице."
+                };
+                instanceData.Image = LoadIcon("GrdRevit.Resources.params16.png");
+                instanceData.LargeImage = LoadIcon("GrdRevit.Resources.params32.png");
+                instanceData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(instanceData);
+
+                var settingsData = new PushButtonData(
+                    SettingsButtonName,
+                    "Настройки",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdSettingsCommand).FullName)
+                {
+                    ToolTip = "Настройки всех функций плагина JTOOLS",
+                    LongDescription = "Открывает единое окно настроек: карта значений «прибор -> параметр экземпляра», " +
+                                      "сопоставление кода прибора с именем типа семейства и высота 3D-вида-фрагмента по умолчанию."
+                };
+                settingsData.Image = LoadIcon("GrdRevit.Resources.settings16.png");
+                settingsData.LargeImage = LoadIcon("GrdRevit.Resources.settings32.png");
+                settingsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(settingsData);
 
                 GrdLog.Log("OnStartup: done");
                 return Result.Succeeded;

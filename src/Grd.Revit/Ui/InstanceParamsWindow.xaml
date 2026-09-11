@@ -1,0 +1,174 @@
+<Window x:Class="GrdRevit.Ui.InstanceParamsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Параметры экземпляра"
+        Width="1040" Height="720"
+        MinWidth="760" MinHeight="480"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <GroupBox DockPanel.Dock="Bottom" Header="Применение изменить" Margin="0,8,0,0" Padding="6">
+            <StackPanel>
+                <TextBlock Text="Параметры «экземпляр» изменяют только выбранный элемент. Параметры «тип» (жёлтые строки) изменяются у ТИПА — они применятся ко ВСЕМ экземплярам этого типа в проекте."
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Применить изменения" Click="OnApply"
+                            Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
+                    <Button Content="Обновить из проекта" Click="OnRefresh" Margin="8,0,0,0" Padding="12,5"/>
+                    <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="14,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Text="Двойной щелчок (или F2) по ячейке «Значение» открывает её для редактирования; текст выделяется целиком. Курсор уже в поле поиска…"/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <TextBlock x:Name="ElementInfo" TextWrapping="Wrap" Margin="2,0,2,4"
+                           Foreground="{StaticResource TextPrimaryBrush}" FontWeight="SemiBold"
+                           Text="Выберите экземпляр семейства в Revit и нажмите кнопку плагина."/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <TextBox x:Name="FilterBox" Width="260" Padding="6,3" TextChanged="OnFilterChanged"
+                             ToolTip="Фильтрует список по имени параметра"/>
+                    <Button Content="Сбросить" Click="OnFilterReset" Margin="6,0,0,0"/>
+                    <TextBlock x:Name="CountText" VerticalAlignment="Center" Margin="14,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+            </StackPanel>
+
+            <DataGrid x:Name="ParamsGrid"
+                      ItemsSource="{Binding Rows}"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False" CanUserDeleteRows="False"
+                      HeadersVisibility="Column"
+                      SelectionMode="Single"
+                      AlternatingRowBackground="White"
+                      GridLinesVisibility="Horizontal"
+                      PreparingCellForEdit="OnPreparingCellForEdit">
+                <DataGrid.Resources>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                        <Style.Triggers>
+                            <!-- Жёлтый фон = параметр типа: его значение распространяется на все экземпляры типа -->
+                            <DataTrigger Binding="{Binding IsInstance}" Value="False">
+                                <Setter Property="Background" Value="#FCF4E2"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.Resources>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Имя параметра" Binding="{Binding Name}" Width="1.2*" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Группа" Binding="{Binding Group}" Width="1*" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Тип значения" Binding="{Binding StorageType}" Width="90" CanUserResize="False" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Привязка" Binding="{Binding BindingText}" Width="86" CanUserResize="False" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTemplateColumn Header="Значение" Width="3.4*" CanUserResize="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Value}" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" Margin="6,0" ToolTip="{Binding Value}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditable}" Value="False">
+                                                        <Setter Property="Foreground" Value="#A5ADB8"/>
+                                                        <Setter Property="TextDecorations" Value="Strikethrough"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="(только чтение)" VerticalAlignment="Center" Margin="6,0,4,0"
+                                               Foreground="#A5ADB8" FontSize="11">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditable}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                        <DataGridTemplateColumn.CellEditingTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         IsEnabled="{Binding IsEditable}" Margin="2"
+                                         Loaded="OnEditBoxLoaded"
+                                         PreviewMouseLeftButtonDown="OnEditBoxPreviewMouseDown"
+                                         GotKeyboardFocus="OnEditBoxGotKeyboardFocus"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellEditingTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Действие" Width="124" CanUserResize="False" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnClearFormulaClick" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                        Margin="6,0" Padding="8,2" FontSize="11"
+                                        ToolTip="Снять формулу у параметра ТИПА. Параметр станет редактируемым: редактируется само семейство, формула убирается у всех типов, затем семейство перезагружается в проект (затронет все экземпляры).">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ShowClearFormula}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="✎" Margin="0,0,4,0"/>
+                                        <TextBlock Text="снять формулу"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+    </DockPanel>
+</Window>

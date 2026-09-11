@@ -16,3 +16,4 @@ C:\Users\user\Documents\GrdRevit\tools\Grd.Dump\obj\Release\net9.0\refint\Grd.Du
 C:\Users\user\Documents\GrdRevit\tools\Grd.Dump\obj\Release\net9.0\Grd.Dump.pdb
 C:\Users\user\Documents\GrdRevit\tools\Grd.Dump\obj\Release\net9.0\Grd.Dump.genruntimeconfig.cache
 C:\Users\user\Documents\GrdRevit\tools\Grd.Dump\obj\Release\net9.0\ref\Grd.Dump.dll
+C:\Users\user\Documents\GrdRevit\tools\Grd.Dump\obj\Release\net9.0\Grd.Dump.sourcelink.json

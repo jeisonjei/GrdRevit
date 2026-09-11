@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Grd.Dump")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f0df020c124817b84235cf5f426017d853e91f63")]
 [assembly: System.Reflection.AssemblyProductAttribute("Grd.Dump")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Grd.Dump")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

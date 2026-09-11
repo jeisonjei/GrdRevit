@@ -15,7 +15,7 @@ namespace GrdInstaller
 
         public MainForm()
         {
-            Text = "Установка плагина ГрД";
+            Text = "Установка плагина JTOOLS";
             Font = new Font("Segoe UI", 9f);
             Width = 760;
             Height = 560;

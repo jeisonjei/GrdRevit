@@ -79,6 +79,17 @@
             </StackPanel>
         </GroupBox>
 
+        <GroupBox DockPanel.Dock="Top" Header="3D-вид из прямоугольника" Margin="0,0,0,8" Padding="4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Высота объёма 3D-фрагмента по умолчанию:"
+                           VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBox x:Name="Box3DHeightBox" Width="80" Margin="8,0,0,0"
+                         ToolTip="Высота объёма 3D-вида, который создаётся кнопкой «3D-фрагмент» (в метрах)"/>
+                <TextBlock Text="м" VerticalAlignment="Center" Margin="6,0,0,0"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+        </GroupBox>
+
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
             <Button Content="Сохранить" Width="90" Height="30" Style="{StaticResource PrimaryButtonStyle}" Click="OnSave" Padding="12,0" VerticalContentAlignment="Center"/>
             <Button Content="Отмена" Width="90" Height="30" Margin="8,0,0,0" IsCancel="True" Click="OnCancel" Padding="12,0" VerticalContentAlignment="Center"/>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -31,7 +31,7 @@ namespace GrdRevit.Revit
                 ElementId appliedId = ElementId.InvalidElementId;
                 string result;
 
-                using (var t = new Transaction(doc, "Audytor: применить тип прибора"))
+                using (var t = new Transaction(doc, "JTOOLS: применить тип прибора"))
                 {
                     try
                     {

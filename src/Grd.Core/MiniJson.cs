@@ -25,6 +25,7 @@ namespace GrdRevit.Core
             sb.Append(',');
             WriteProp(sb, "WrapInTransaction", s.WrapInTransaction ? "true" : "false");
             sb.Append(',');
+            WriteProp(sb, "Default3DBoxHeight", s.Default3DBoxHeight.ToString(CultureInfo.InvariantCulture));
             sb.Append(',');
             WriteProp(sb, "ValueParamMap", WriteDict(s.ValueParamMap));
             sb.Append(',');
@@ -135,6 +136,16 @@ namespace GrdRevit.Core
             if (m.TryGetValue("TypeNameExactMap", out var t)) ReadDict(t, s.TypeNameExactMap);
             if (m.TryGetValue("ShowCount", out var sc)) s.ShowCount = GetBool(sc);
             if (m.TryGetValue("WrapInTransaction", out var wt)) s.WrapInTransaction = GetBool(wt);
+            if (m.TryGetValue("Default3DBoxHeight", out var dh))
+            {
+                var dhStr = dh as string;
+                if (dhStr != null &&
+                    double.TryParse(dhStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var dhVal) &&
+                    dhVal > 0.0 && dhVal < 1000.0)
+                {
+                    s.Default3DBoxHeight = dhVal;
+                }
+            }
             if (m.TryGetValue("ValueParamMap", out var vp)) ReadDict(vp, s.ValueParamMap);
             if (m.TryGetValue("LastGrdPath", out var lp)) s.LastGrdPath = lp as string ?? string.Empty;
             if (m.TryGetValue("LastRoomsPath", out var rp)) s.LastRoomsPath = rp as string ?? string.Empty;

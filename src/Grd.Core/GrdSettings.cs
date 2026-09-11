@@ -29,6 +29,9 @@ namespace GrdRevit.Core
         /// <summary>Создавать ли transaction отдельно для копирования типа.</summary>
         public bool WrapInTransaction { get; set; } = true;
 
+        /// <summary>Высота 3D-вида-фрагмента по умолчанию (в метрах) для кнопки «3D-фрагмент».</summary>
+        public double Default3DBoxHeight { get; set; } = 3.0;
+
         /// <summary>Путь к файлу .grd, загруженному последний раз.</summary>
         public string LastGrdPath { get; set; } = string.Empty;
 

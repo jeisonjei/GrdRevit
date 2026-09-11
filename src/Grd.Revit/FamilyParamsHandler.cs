@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
@@ -43,7 +43,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "Audytor: изменить параметры семейств";
+            return "JTOOLS: изменить параметры семейств";
         }
 
         public void Execute(UIApplication app)
@@ -162,7 +162,7 @@ namespace GrdRevit.Revit
                 // транзакции этого документа. Иначе AddParameter/RemoveParameter/
                 // MakeInstance оставляют «висячие» правки: сводка показывает «добавлено»,
                 // но SaveAs их не фиксирует, и после LoadFamily параметра в семействе нет.
-                using (var ft = new Transaction(fdoc, "Audytor: параметры «" + familyName + "»"))
+                using (var ft = new Transaction(fdoc, "JTOOLS: параметры «" + familyName + "»"))
                 {
                     ft.Start();
                     try
@@ -198,7 +198,7 @@ namespace GrdRevit.Revit
                 var beforeNames = FamilyNames(doc);
                 GrdLog.Log("FamilyParamsHandler: до LoadFamily семейств=" + beforeNames.Count +
                            ": " + string.Join("; ", beforeNames));
-                using (var t = new Transaction(doc, "Audytor: параметры семейства «" + familyName + "»"))
+                using (var t = new Transaction(doc, "JTOOLS: параметры семейства «" + familyName + "»"))
                 {
                     t.Start();
                     try

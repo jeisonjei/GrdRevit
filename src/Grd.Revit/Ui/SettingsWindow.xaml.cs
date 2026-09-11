@@ -1,9 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using GrdRevit.Core;
 
 namespace GrdRevit.Ui
@@ -29,8 +31,38 @@ namespace GrdRevit.Ui
 
     public partial class SettingsWindow : Window
     {
+        private static SettingsWindow _sharedWindow;
+
         private ObservableCollection<MapPair> _valueMap;
         private ObservableCollection<MapPair> _exactMap;
+
+        private static void EnsureShared()
+        {
+            if (_sharedWindow != null && _sharedWindow.IsVisible) return;
+            _sharedWindow = new SettingsWindow();
+            _sharedWindow.Closed += (s, e) => _sharedWindow = null;
+        }
+
+        /// <summary>Открывает (или активирует) единственное окно настроек; owner — WPF-окно.</summary>
+        public static void ShowShared(Window owner)
+        {
+            EnsureShared();
+            if (owner != null) _sharedWindow.Owner = owner;
+            if (!_sharedWindow.IsVisible) _sharedWindow.Show();
+            _sharedWindow.Activate();
+        }
+
+        /// <summary>Открывает (или активирует) единственное окно настроек; owner — дескриптор главного окна Revit.</summary>
+        public static void ShowShared(IntPtr ownerHandle)
+        {
+            EnsureShared();
+            if (ownerHandle != IntPtr.Zero)
+            {
+                new WindowInteropHelper(_sharedWindow) { Owner = ownerHandle };
+            }
+            if (!_sharedWindow.IsVisible) _sharedWindow.Show();
+            _sharedWindow.Activate();
+        }
 
         /// <summary>Имена типовых параметров механического оборудования (для выпадающего списка).</summary>
         public ObservableCollection<string> TypeParams { get; } = new ObservableCollection<string>();
@@ -63,6 +95,9 @@ namespace GrdRevit.Ui
 
             ValueMapGrid.ItemsSource = _valueMap;
             ExactMapGrid.ItemsSource = _exactMap;
+
+            Box3DHeightBox.Text = settings.Default3DBoxHeight
+                .ToString(CultureInfo.InvariantCulture);
 
             Loaded += (s, e) => RequestTypeParamNames();
         }
@@ -133,7 +168,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.TypeParamsEvent;
                 if (handler == null || ev == null)
                 {
-                    MessageBox.Show("Обработчик типовых параметров не доступен.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Обработчик типовых параметров не доступен.", "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
@@ -150,7 +185,7 @@ namespace GrdRevit.Ui
                     {
                         if (!string.IsNullOrEmpty(result.Error))
                         {
-                            var td = new Autodesk.Revit.UI.TaskDialog("Audytor: типовые параметры")
+                            var td = new Autodesk.Revit.UI.TaskDialog("JTOOLS: типовые параметры")
                             {
                                 MainInstruction = "Не удалось прочитать типовые параметры.",
                                 MainContent = result.Error,
@@ -186,7 +221,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("OnTypeParamSelected: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: типовые параметры",
+                MessageBox.Show("Ошибка: " + ex.Message, "JTOOLS: типовые параметры",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -215,7 +250,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.PickEvent;
                 if (ev == null || RevitContext.PickHandler == null)
                 {
-                    MessageBox.Show("Обработчик чтения типа не доступен.", "Audytor: чтение типа",
+                    MessageBox.Show("Обработчик чтения типа не доступен.", "JTOOLS: чтение типа",
                         MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
@@ -229,7 +264,7 @@ namespace GrdRevit.Ui
                         if (!result.Ok)
                         {
                             GrdLog.Log("OnPickTypeFromSelection: NO - " + result.Error);
-                            var td = new Autodesk.Revit.UI.TaskDialog("Audytor: чтение типа семейства")
+                            var td = new Autodesk.Revit.UI.TaskDialog("JTOOLS: чтение типа семейства")
                             {
                                 MainInstruction = "Не удалось прочитать семейство выделенного элемента.",
                                 MainContent = result.Error ?? "Неизвестная ошибка.",
@@ -266,7 +301,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("OnPickTypeFromSelection: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: чтение типа",
+                MessageBox.Show("Ошибка: " + ex.Message, "JTOOLS: чтение типа",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -278,7 +313,7 @@ namespace GrdRevit.Ui
             grid.CommitEdit(DataGridEditingUnit.Row, true);
             if (grid.SelectedItems.Count == 0)
             {
-                MessageBox.Show("Выделите строки для удаления.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Выделите строки для удаления.", "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -303,6 +338,19 @@ namespace GrdRevit.Ui
                 .ToDictionary(p => p.Key.Trim(), p => p.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
             settings.TypeNameExactMap = ToDict(_exactMap);
+
+            if (double.TryParse(Box3DHeightBox.Text,
+                    NumberStyles.Float, CultureInfo.InvariantCulture, out var height) &&
+                height > 0.0 && height < 1000.0)
+            {
+                settings.Default3DBoxHeight = height;
+            }
+            else
+            {
+                GrdLog.Log("SettingsWindow.OnSave: некорректная высота 3D-вида '" +
+                    Box3DHeightBox.Text + "', оставлено " +
+                    settings.Default3DBoxHeight.ToString(CultureInfo.InvariantCulture));
+            }
 
             RevitContext.SaveSettings();
             Close();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
@@ -78,7 +78,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "Audytor: список семейств и общих параметров";
+            return "JTOOLS: список семейств и общих параметров";
         }
 
         public void Execute(UIApplication app)

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
@@ -33,7 +33,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "Audytor: прочитать типы выделенного семейства";
+            return "JTOOLS: прочитать типы выделенного семейства";
         }
 
         public void Execute(UIApplication app)

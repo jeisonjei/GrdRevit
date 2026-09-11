@@ -1,0 +1,88 @@
+<Project>
+  <PropertyGroup>
+    <AssemblyName>GrdRevit</AssemblyName>
+    <IntermediateOutputPath>obj\Release\</IntermediateOutputPath>
+    <BaseIntermediateOutputPath>obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\</MSBuildProjectExtensionsPath>
+    <_TargetAssemblyProjectName>Grd.Revit</_TargetAssemblyProjectName>
+    <RootNamespace>GrdRevit</RootNamespace>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <!--
+      net48               -> Revit 2020-2024 (uses Revit 2024 API assemblies)
+      net8.0-windows      -> Revit 2025-2026 (uses Revit 2026 API assemblies)
+    -->
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>GrdRevit</RootNamespace>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- Не копировать Revit API рядом с плагином -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RestoreAdditionalProjectSources>
+    </RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)'=='net48'">
+    <DefineConstants>$(DefineConstants);REVIT2024</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <DefineConstants>$(DefineConstants);REVIT2026</DefineConstants>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Grd.Core\Grd.Core.csproj" />
+  </ItemGroup>
+  <!-- Значки кнопки на ленте (ресурсы сборки, не копируются отдельно) -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\plugin16.png" />
+    <EmbeddedResource Include="Resources\plugin32.png" />
+    <EmbeddedResource Include="Resources\params16.png" />
+    <EmbeddedResource Include="Resources\params32.png" />
+    <EmbeddedResource Include="Resources\box3d16.png" />
+    <EmbeddedResource Include="Resources\box3d32.png" />
+    <EmbeddedResource Include="Resources\settings16.png" />
+    <EmbeddedResource Include="Resources\settings32.png" />
+  </ItemGroup>
+  <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <!-- Revit 2026 API (net8.0, совместим с Revit 2025-2026) -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+  </ItemGroup>
+  <ItemGroup>
+    <ReferencePath Include="C:\Users\user\Documents\GrdRevit\src\Grd.Core\bin\Release\netstandard2.0\GrdRevit.Core.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\mscorlib.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\PresentationCore.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\PresentationFramework.dll" />
+    <ReferencePath Include="C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll" />
+    <ReferencePath Include="C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Core.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Data.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Drawing.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.IO.Compression.FileSystem.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Numerics.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Runtime.Serialization.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Windows.Controls.Ribbon.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Xaml.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Xml.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\System.Xml.Linq.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\UIAutomationClient.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\UIAutomationClientsideProviders.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\UIAutomationProvider.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\UIAutomationTypes.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\WindowsBase.dll" />
+    <ReferencePath Include="C:\Users\user\.nuget\packages\microsoft.netframework.referenceassemblies.net48\1.0.3\build\.NETFramework\v4.8\Facades\netstandard.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\FamilyParamsWindow.g.cs" />
+    <Compile Include="C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\MainWindow.g.cs" />
+    <Compile Include="C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SettingsWindow.g.cs" />
+    <Compile Include="C:\Users\user\Documents\GrdRevit\src\Grd.Revit\obj\Release\net48\Ui\SharedParamsPickerWindow.g.cs" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

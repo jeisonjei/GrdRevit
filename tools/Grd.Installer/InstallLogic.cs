@@ -28,7 +28,7 @@ namespace GrdInstaller
     {
         private const string AddinId2024 = "86C8044E-E80E-438B-9C23-239B96D1E94B";
         private const string AddinId2026 = "8E3F35CA-4985-4D7F-8F9F-FFEF76E7DB9E";
-        private const string AddinName = "ГрД - отопительные приборы СО";
+        private const string AddinName = "JTOOLS";
         private const string VendorDesc = "Загрузка .grd и типы отопительных приборов СО";
 
         public static List<RevitInstall> Detect()

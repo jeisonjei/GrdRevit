@@ -57,6 +57,11 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _familyParamsEvent;
         public static Autodesk.Revit.UI.ExternalEvent FamilyParamsEvent => _familyParamsEvent;
 
+        /// <summary>Маршалит чтение/изменение параметров выбранного экземпляра (без редактора семейства).</summary>
+        public static Revit.InstanceParamsHandler InstanceParamsHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _instanceParamsEvent;
+        public static Autodesk.Revit.UI.ExternalEvent InstanceParamsEvent => _instanceParamsEvent;
+
         /// <summary>
         /// Создаёт ExternalEvent-обработчики. Допустимо ТОЛЬКО в контексте стандартного
         /// API-выполнения (внешняя команда/событие/старт) — из кнопки моделесс-окна
@@ -93,6 +98,12 @@ namespace GrdRevit
                 FamilyParamsHandler = new Revit.FamilyParamsHandler();
                 _familyParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(FamilyParamsHandler);
                 GrdLog.Log("EnsureHandlers: FamilyParamsEvent created");
+            }
+            if (_instanceParamsEvent == null)
+            {
+                InstanceParamsHandler = new Revit.InstanceParamsHandler();
+                _instanceParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(InstanceParamsHandler);
+                GrdLog.Log("EnsureHandlers: InstanceParamsEvent created");
             }
         }
 

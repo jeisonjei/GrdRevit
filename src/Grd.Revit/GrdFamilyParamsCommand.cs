@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.UI;
@@ -62,7 +62,7 @@ namespace GrdRevit
                 GrdLog.Log("F99: EXCEPTION: " + ex);
                 try
                 {
-                    System.Windows.MessageBox.Show(ex.Message, "Audytor: параметры семейств",
+                    System.Windows.MessageBox.Show(ex.Message, "JTOOLS: параметры семейств",
                         System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
                 }
                 catch { }

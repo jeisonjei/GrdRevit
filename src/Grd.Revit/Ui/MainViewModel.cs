@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -213,7 +213,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadFile: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -235,7 +235,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -289,7 +289,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadRoomsRadiators: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -327,7 +327,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -354,7 +354,7 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("LoadValveSettings: EXCEPTION: " + ex);
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -379,7 +379,7 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка чтения файла: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -391,13 +391,13 @@ namespace GrdRevit.Ui
                 if (_valveSettings.Count == 0)
                 {
                     MessageBox.Show("Сначала загрузите файл настроек клапанов (Load Valve Settings).",
-                        "Audytor", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 if (_allRows.Count == 0)
                 {
                     MessageBox.Show("Сначала загрузите помещения и радиаторы (Load Rooms and Radiators).",
-                        "Audytor", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
@@ -418,11 +418,9 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 GrdLog.Log("FillValveSettings: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Ошибка: " + ex.Message, "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
-
-        private SettingsWindow _settingsWindow;
 
         /// <summary>Очищает таблицы приборов и настроек клапанов и удаляет сохранённые данные.</summary>
         public void ClearRows()
@@ -573,21 +571,12 @@ namespace GrdRevit.Ui
             // в Revit (нужно для «Взять из выделенного»). Окно не должно быть модальным.
             try
             {
-                if (_settingsWindow != null && _settingsWindow.IsVisible)
-                {
-                    _settingsWindow.Activate();
-                    return;
-                }
-
-                _settingsWindow = new SettingsWindow();
-                _settingsWindow.Owner = MainWindow.Instance;
-                _settingsWindow.Closed += (s, e) => _settingsWindow = null;
-                _settingsWindow.Show();
+                SettingsWindow.ShowShared(MainWindow.Instance);
             }
             catch (Exception ex)
             {
                 GrdLog.Log("OpenSettings: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка открытия настроек: " + ex.Message, "Audytor",
+                MessageBox.Show("Ошибка открытия настроек: " + ex.Message, "JTOOLS",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -602,7 +591,7 @@ namespace GrdRevit.Ui
                 var ev = RevitContext.ApplyEvent;
                 if (ev == null)
                 {
-                    MessageBox.Show("Обработчик применения не доступен.", "Audytor", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Обработчик применения не доступен.", "JTOOLS", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
                 GrdLog.Log("ApplyRow: ставим в очередь " + row.Code);
@@ -615,7 +604,7 @@ namespace GrdRevit.Ui
                 // Ни одно исключение не должно вылетать в диспетчер WPF:
                 // необработанная ошибка на потоке Revit = "непоправимая ошибка".
                 GrdLog.Log("ApplyRow: EXCEPTION " + ex);
-                MessageBox.Show("Ошибка: " + ex.Message, "Audytor: применение типа",
+                MessageBox.Show("Ошибка: " + ex.Message, "JTOOLS: применение типа",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -51,7 +51,7 @@ namespace GrdRevit.Revit
 
         public string GetName()
         {
-            return "Audytor: типовые параметры механического оборудования";
+            return "JTOOLS: типовые параметры механического оборудования";
         }
 
         public void Execute(UIApplication app)

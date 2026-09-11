@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
   <AddIn Type="Application">
-    <Name>ГрД — отопительные приборы СО</Name>
+    <Name>JTOOLS</Name>
     <Assembly>C:\Users\user\Documents\GrdRevit\dist\Revit2026\GrdRevit.dll</Assembly>
     <AddInId>8E3F35CA-4985-4D7F-8F9F-FFEF76E7DB9E</AddInId>
     <FullClassName>GrdRevit.GrdApplication</FullClassName>
