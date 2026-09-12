@@ -1,3 +1,0 @@
-C:\Users\user\Documents\GrdRevit\tools\Grd.Installer\bin\Release\net48\GrdInstaller.exe
-C:\Users\user\Documents\GrdRevit\tools\Grd.Installer\bin\Release\net48\GrdInstaller.exe.config
-C:\Users\user\Documents\GrdRevit\tools\Grd.Installer\bin\Release\net48\GrdInstaller.pdb

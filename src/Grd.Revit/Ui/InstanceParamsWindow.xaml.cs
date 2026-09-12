@@ -45,9 +45,11 @@ namespace GrdRevit.Ui
 
         public bool Changed => !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
 
-        /// <summary>Кнопка «снять формулу»: только у параметров ТИПА только для чтения
-        /// (формулы в Revit бывают только у параметров типа).</summary>
-        public bool ShowClearFormula => !IsEditable && !IsInstance;
+        /// <summary>Кнопка «снять формулу»: у любого параметра только для чтения.
+        /// Формула в семействе всегда на параметре ТИПА, но значение в проекте может
+        /// блокироваться и у строки «экземпляр» (формульный тип-параметр с тем же
+        /// именем показывается в списке элемента как «только чтение»).</summary>
+        public bool ShowClearFormula => !IsEditable;
     }
 
     /// <summary>Моделесс-окно: редактирование значений всех параметров выбранного
@@ -126,7 +128,7 @@ namespace GrdRevit.Ui
 
             var answer = MessageBox.Show(
                 "Будет отредактировано само СЕМЕЙСТВО (как через «Редактировать семейство»): " +
-                "у параметра типа «" + row.Name + "» формула уберётся у всех типов семейства, " +
+                "у параметра «" + row.Name + "» формула уберётся у всех типов семейства, " +
                 "после чего семейство перезагрузится в проект.\n\n" +
                 "Это затронет ВСЕ экземпляры этого семейства в проекте. Продолжить?",
                 "Снять формулу", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
@@ -297,6 +299,15 @@ namespace GrdRevit.Ui
                     IsInstance = r.IsInstance,
                     NewValue = r.Value ?? string.Empty
                 });
+            }
+
+            foreach (var r in Rows)
+            {
+                bool pass = r.IsEditable && r.Changed;
+                if (!pass) continue;
+                GrdLog.Log("InstanceParamsWindow.OnApply: собрано «" + r.Name + "» isInstance=" +
+                           r.IsInstance + " ed=" + r.IsEditable + " changed=" + r.Changed +
+                           " value=\"" + (r.Value ?? string.Empty) + "\" orig=\"" + (r.OriginalValue ?? string.Empty) + "\"");
             }
 
             if (edits.Count == 0)

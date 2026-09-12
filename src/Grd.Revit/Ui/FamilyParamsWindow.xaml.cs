@@ -173,6 +173,7 @@ namespace GrdRevit.Ui
                         FamiliesCount.Text = string.IsNullOrEmpty(result.Error)
                             ? "семейств: " + FamilyChecks.Count
                             : result.Error;
+                        ApplyFamFilter();
 
                         SharedDefs.Clear();
                         foreach (var d in result.SharedDefs) SharedDefs.Add(new SharedDefRow { Def = d });
@@ -313,6 +314,36 @@ namespace GrdRevit.Ui
         private void OnRefresh(object sender, RoutedEventArgs e)
         {
             RefreshInfo();
+        }
+
+        private void OnFamFilterChanged(object sender, TextChangedEventArgs e)
+        {
+            ApplyFamFilter();
+        }
+
+        private void OnFamFilterReset(object sender, RoutedEventArgs e)
+        {
+            FamFilter.Text = string.Empty;
+            ApplyFamFilter();
+        }
+
+        /// <summary>Применяет текстовый фильтр к списку семейств слева.
+        /// Скрытые семейства сохраняют свою галку — фильтр влияет только на отображение.</summary>
+        private void ApplyFamFilter()
+        {
+            var view = CollectionViewSource.GetDefaultView(FamilyChecks);
+            if (view == null) return;
+            var filter = FamFilter.Text?.Trim();
+            if (string.IsNullOrEmpty(filter))
+            {
+                view.Filter = null;
+                FamFilterCount.Text = string.Empty;
+                return;
+            }
+            view.Filter = o => o is FamilyCheckRow r &&
+                r.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+            int shown = FamilyChecks.Count(o => o.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+            FamFilterCount.Text = "найдено " + shown + " из " + FamilyChecks.Count;
         }
 
         private void OnSelFilterChanged(object sender, TextChangedEventArgs e)

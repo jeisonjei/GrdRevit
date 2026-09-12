@@ -1,0 +1,20 @@
+# Build outputs
+bin/
+obj/
+dist/
+*.exe
+*.dll
+*.pdb
+*.baml
+
+# WPF temp build projects (generated during XAML compile
+*_wpftmp.csproj
+*_wpftmp.
+
+# IDE / OS
+.vs/
+*.user
+*.suo
+
+# Logs
+*.log

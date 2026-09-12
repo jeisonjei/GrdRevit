@@ -40,6 +40,8 @@
     <EmbeddedResource Include="Resources\params32.png" />
     <EmbeddedResource Include="Resources\box3d16.png" />
     <EmbeddedResource Include="Resources\box3d32.png" />
+    <EmbeddedResource Include="Resources\views16.png" />
+    <EmbeddedResource Include="Resources\views32.png" />
     <EmbeddedResource Include="Resources\settings16.png" />
     <EmbeddedResource Include="Resources\settings32.png" />
   </ItemGroup>

@@ -62,6 +62,11 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _instanceParamsEvent;
         public static Autodesk.Revit.UI.ExternalEvent InstanceParamsEvent => _instanceParamsEvent;
 
+        /// <summary>Маршалит чтение/дублирование/переименование/открытие видов (окно «Управляющий видами»).</summary>
+        public static Revit.ViewsManagerHandler ViewsManagerHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _viewsManagerEvent;
+        public static Autodesk.Revit.UI.ExternalEvent ViewsManagerEvent => _viewsManagerEvent;
+
         /// <summary>
         /// Создаёт ExternalEvent-обработчики. Допустимо ТОЛЬКО в контексте стандартного
         /// API-выполнения (внешняя команда/событие/старт) — из кнопки моделесс-окна
@@ -104,6 +109,12 @@ namespace GrdRevit
                 InstanceParamsHandler = new Revit.InstanceParamsHandler();
                 _instanceParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(InstanceParamsHandler);
                 GrdLog.Log("EnsureHandlers: InstanceParamsEvent created");
+            }
+            if (_viewsManagerEvent == null)
+            {
+                ViewsManagerHandler = new Revit.ViewsManagerHandler();
+                _viewsManagerEvent = Autodesk.Revit.UI.ExternalEvent.Create(ViewsManagerHandler);
+                GrdLog.Log("EnsureHandlers: ViewsManagerEvent created");
             }
         }
 

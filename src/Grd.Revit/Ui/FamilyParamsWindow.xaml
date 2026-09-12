@@ -140,12 +140,23 @@
 
             <GroupBox Grid.Column="0" Header="Семейства (отметить галкой)" Padding="4">
                 <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
-                        <Button Content="Все" Click="OnSelectAll" Padding="10,2"/>
-                        <Button Content="Снять все" Click="OnSelectNone" Margin="6,0,0,0" Padding="10,2"/>
-                        <TextBlock x:Name="FamiliesCount" VerticalAlignment="Center" Margin="10,0,0,0"
-                                   Foreground="{StaticResource TextSecondaryBrush}"/>
-                        <Button Content="Обновить" Click="OnRefresh" Margin="10,0,0,0" Padding="10,2"/>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                            <Button Content="Все" Click="OnSelectAll" Padding="10,2"/>
+                            <Button Content="Снять все" Click="OnSelectNone" Margin="6,0,0,0" Padding="10,2"/>
+                            <TextBlock x:Name="FamiliesCount" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <Button Content="Обновить" Click="OnRefresh" Margin="10,0,0,0" Padding="10,2"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBox x:Name="FamFilter" Width="150" Padding="4,3" TextChanged="OnFamFilterChanged"
+                                     ToolTip="Фильтрует список семейств по имени (без учёта регистра)"/>
+                            <Button Content="Сбросить" Click="OnFamFilterReset" Margin="6,0,0,0" Padding="8,2"/>
+                            <TextBlock x:Name="FamFilterCount" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                        </StackPanel>
                     </StackPanel>
                     <ListBox x:Name="FamiliesList"
                              ItemsSource="{Binding FamilyChecks}"

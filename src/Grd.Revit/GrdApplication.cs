@@ -18,9 +18,11 @@ namespace GrdRevit
         private const string Box3DButtonName = "GrdRevit.Box3D";
         private const string InstanceParamsButtonName = "GrdRevit.InstanceParams";
         private const string SettingsButtonName = "GrdRevit.Settings";
+        private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
 
         public Result OnStartup(UIControlledApplication app)
         {
+            GrdLog.LogSessionStart();
             GrdLog.Log("OnStartup: begin");
             try
             {
@@ -100,6 +102,25 @@ namespace GrdRevit
                 instanceData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(instanceData);
+
+                var viewsData = new PushButtonData(
+                    ViewsManagerButtonName,
+                    "Управляющий\nвидами",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdViewsManagerCommand).FullName)
+                {
+                    ToolTip = "Список всех видов документа с поиском и фильтрами: переименовать, дублировать, перейти к виду",
+                    LongDescription = "Открывает окно со всеми видами активного документа. " +
+                                      "Фильтры «Разрезы / Планы / 3D» и поиск по имени. " +
+                                      "Переименование — двойной щелчок или F2 по имени вида, " +
+                                      "кнопка «Копия» дублирует вид и сразу открывает его имя, " +
+                                      "кнопка «Открыть» переключает Revit на этот вид."
+                };
+                viewsData.Image = LoadIcon("GrdRevit.Resources.views16.png");
+                viewsData.LargeImage = LoadIcon("GrdRevit.Resources.views32.png");
+                viewsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(viewsData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,

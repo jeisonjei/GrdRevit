@@ -1,0 +1,182 @@
+<Window x:Class="GrdRevit.Ui.ViewsManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Управляющий видами"
+        Width="960" Height="640"
+        MinWidth="720" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <GroupBox DockPanel.Dock="Bottom" Header="Действия" Margin="0,8,0,0" Padding="6">
+            <StackPanel>
+                <TextBlock Text="Отмечайте виды чекбоксами слева для групповых операций. Переименование — двойной щелчок по имени или F2. «Дублировать» создаёт копию и открывает имя для правки. «✓ Добавить префикс…» добавит текст в начало имён всех отмеченных видов."
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Обновить список" Click="OnRefresh" Style="{StaticResource GhostButtonStyle}" Padding="12,5"/>
+                    <Button Content="Дублировать выбранный" Click="OnDuplicateSelected" Margin="8,0,0,0" Padding="12,5"/>
+                    <Button Content="Открыть выбранный" Click="OnOpenSelected" Margin="8,0,0,0" Padding="12,5"/>
+                    <Button Content="✓ Добавить префикс…" Click="OnAddPrefix" Margin="8,0,0,0" Padding="12,5"
+                            ToolTip="Добавить текст в начало имени всех отмеченных чекбоксами видов"/>
+                    <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="14,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Text="Курсор уже в поле поиска: начните вводить имя — список отфильтруется."/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <Button x:Name="PickTemplateButton" Content="Шаблон вида…" Click="OnPickTemplate"
+                            Padding="14,5" FontWeight="SemiBold"
+                            ToolTip="Выбрать шаблон вида, который будет применяться/связываться с видами кнопками в таблице"/>
+                    <TextBlock Text="Выбранный шаблон применяется к строкам таблицы кнопками «Применить ШВ» и «Связать ШВ»."
+                               VerticalAlignment="Center" Margin="12,0,0,0" TextWrapping="Wrap"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+
+                <Border x:Name="ActiveTemplatePanel" Visibility="Collapsed" CornerRadius="4" Padding="12,8" Margin="0,0,0,6"
+                        Background="{StaticResource AccentBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="ActiveTemplateCaption" FontWeight="Bold" Foreground="White" FontSize="13"
+                                   Text="Выбран шаблон вида:"/>
+                        <TextBlock x:Name="ActiveTemplateText" Foreground="White" FontSize="15" Margin="0,2,0,0"
+                                   FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Foreground="#E6ECFF" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"
+                                   Text="«Применить ШВ» — разовое применение свойств шаблона к виду; «Связать ШВ» — поставить шаблон видом (изменения шаблона будут обновлять вид)."/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="InfoText" TextWrapping="Wrap" Margin="2,0,2,4"
+                           Foreground="{StaticResource TextPrimaryBrush}" FontWeight="SemiBold"
+                           Text="Виды активного документа Revit."/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <TextBox x:Name="FilterBox" Width="280" Padding="6,3" TextChanged="OnFilterChanged"
+                             ToolTip="Фильтрует список видов по имени"/>
+                    <Button Content="✕" Click="OnFilterReset" Margin="4,0,14,0" Width="24" Padding="0"/>
+
+                    <CheckBox x:Name="ChkSection" Content="Разрезы" IsChecked="True" VerticalAlignment="Center"
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
+                    <CheckBox x:Name="ChkPlan" Content="Планы" IsChecked="True" VerticalAlignment="Center"
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
+                    <CheckBox x:Name="Chk3d" Content="3D" IsChecked="True" VerticalAlignment="Center"
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
+                    <CheckBox x:Name="ChkSheet" Content="Листы" IsChecked="True" VerticalAlignment="Center"
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
+                    <TextBlock x:Name="CountText" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="2,4,0,0">
+                    <TextBlock Text="Способ поиска:" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <RadioButton x:Name="RbStartsWith" Content="Начинается с" GroupName="MatchMode"
+                                 VerticalAlignment="Center" Margin="0,0,14,0"
+                                 Checked="OnMatchModeChanged"/>
+                    <RadioButton x:Name="RbContains" Content="Содержит" GroupName="MatchMode"
+                                 IsChecked="True" VerticalAlignment="Center"
+                                 Checked="OnMatchModeChanged"/>
+                </StackPanel>
+            </StackPanel>
+
+            <DataGrid x:Name="ViewsGrid"
+                      ItemsSource="{Binding}"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False" CanUserDeleteRows="False"
+                      HeadersVisibility="Column"
+                      SelectionMode="Single"
+                      CellEditEnding="OnCellEditEnding"
+                      MouseDoubleClick="OnGridDoubleClick">
+                <DataGrid.Columns>
+                    <DataGridCheckBoxColumn Header="✓" Width="32" IsReadOnly="False"
+                                            Binding="{Binding Marked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            CanUserSort="False"/>
+                    <DataGridTextColumn Header="Имя вида" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="2*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                        <DataGridTextColumn.EditingElementStyle>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Padding" Value="4,2"/>
+                            </Style>
+                        </DataGridTextColumn.EditingElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Тип" Binding="{Binding KindText}" Width="120" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Масштаб" Binding="{Binding Scale}" Width="90" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTemplateColumn Header="Дублировать" Width="96" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnDuplicateClick" Tag="{Binding}" Padding="8,2" Margin="4,2"
+                                        FontSize="12" HorizontalAlignment="Stretch"
+                                        ToolTip="Создать копию вида и сразу перейти к её переименованию">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="⧉ " FontSize="12"/>
+                                        <TextBlock Text="Копия"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Открыть" Width="80" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnOpenClick" Tag="{Binding}" Padding="8,2" Margin="4,2"
+                                        FontSize="12" HorizontalAlignment="Stretch"
+                                        ToolTip="Перейти к виду в Revit">
+                                    <TextBlock Text="➜ Открыть"/>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Применить ШВ" Width="92" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnApplyTemplateClick" Tag="{Binding}" Padding="8,2" Margin="4,2"
+                                        FontSize="12" HorizontalAlignment="Stretch"
+                                        ToolTip="Разово применить выбранный шаблон вида к этому виду">
+                                    <TextBlock Text="Применить"/>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Связать ШВ" Width="92" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnLinkTemplateClick" Tag="{Binding}" Padding="8,2" Margin="4,2"
+                                        FontSize="12" HorizontalAlignment="Stretch"
+                                        ToolTip="Связать вид с выбранным шаблоном (вид будет обновляться при изменении шаблона)">
+                                    <TextBlock Text="Связать"/>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+    </DockPanel>
+</Window>

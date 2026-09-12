@@ -57,17 +57,17 @@ New-VersionDir '2026' 'net8.0-windows'
 
 # Self-contained installer (net48 WinForms, bundles plugin DLLs as embedded resources)
 Write-Host ""
-Write-Host "=== Publish GrdInstaller.exe ==="
+Write-Host "=== Publish JTOOLS_Installer.exe ==="
 $instOut = Join-Path $RepoRoot 'tools\Grd.Installer\bin\Release\net48'
 dotnet publish (Join-Path $RepoRoot 'tools\Grd.Installer\Grd.Installer.csproj') -c Release -o $instOut --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed' }
-Copy-Item (Join-Path $instOut 'GrdInstaller.exe') (Join-Path $DistRoot 'GrdInstaller.exe') -Force
-Write-Host "Done: $DistRoot\GrdInstaller.exe"
+Copy-Item (Join-Path $instOut 'JTOOLS_Installer.exe') (Join-Path $DistRoot 'JTOOLS_Installer.exe') -Force
+Write-Host "Done: $DistRoot\JTOOLS_Installer.exe"
 
 Write-Host ""
 Write-Host "=== Publish complete. Folders:"
 Get-ChildItem $DistRoot -Directory | ForEach-Object { Write-Host "   $($_.FullName)" }
 Write-Host ""
-Write-Host "Quick install: run dist\GrdInstaller.exe (single self-contained installer)"
+Write-Host "Quick install: run dist\JTOOLS_Installer.exe (single self-contained installer)"
 Write-Host "Manual install: put dist\Revit<ver>\Addins\*.addin into %APPDATA%\Autodesk\Revit\Addins\<ver>\"
 Write-Host "Keep DLLs in dist\Revit<ver>\ (paths in .addin are absolute)."

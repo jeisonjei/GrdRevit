@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -182,6 +182,10 @@ namespace GrdRevit.Revit
                 return res;
             }
 
+            GrdLog.Log("InstanceParamsHandler.Read: id=" + elementId + " класс=" + el.GetType().Name +
+                       " имя=\"" + el.Name + "\" sym=" + ((el as FamilyInstance)?.Symbol?.Name ?? "-") +
+                       " fam=" + ((el as FamilyInstance)?.Symbol?.Family?.Name ?? "-"));
+
             res.IsFamilyInstance = el is FamilyInstance;
             res.ElementName = el.Name;
 
@@ -189,13 +193,13 @@ namespace GrdRevit.Revit
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var p in SafeOrderedParameters(el, instance: true))
-                AddParam(list, seen, p, isInstance: true);
+                AddParam(list, seen, p, isInstance: true, doc);
             res.ElementName = DescribeElement(el);
 
             if (el is FamilyInstance fi && fi.Symbol != null)
             {
                 foreach (var p in SafeOrderedParameters(fi.Symbol, instance: false))
-                    AddParam(list, seen, p, isInstance: false);
+                    AddParam(list, seen, p, isInstance: false, doc);
             }
 
             res.Params = list
@@ -243,7 +247,7 @@ namespace GrdRevit.Revit
             return el.Id?.ToString() ?? string.Empty;
         }
 
-        private static void AddParam(List<ElementParamValue> list, HashSet<string> seen, Parameter p, bool isInstance)
+        private static void AddParam(List<ElementParamValue> list, HashSet<string> seen, Parameter p, bool isInstance, Document doc)
         {
             if (p?.Definition?.Name == null) return;
             if (!isInstance && !seen.Add(p.Definition.Name)) return;
@@ -267,6 +271,44 @@ namespace GrdRevit.Revit
             }
 
             list.Add(row);
+
+            try
+            {
+                bool ro = IsReadOnlyParam(p);
+                string guid = string.Empty;
+                try { guid = p.GUID.ToString().Substring(0, 8); } catch { }
+                string bind = "?";
+                if (doc != null && p.Definition != null)
+                {
+                    try
+                    {
+                        Binding b = null;
+                        try
+                        {
+                            var spe = new FilteredElementCollector(doc).OfClass(typeof(SharedParameterElement))
+                                .Cast<SharedParameterElement>()
+                                .FirstOrDefault(x => x.GuidValue == p.GUID);
+                            if (spe != null) b = doc.ParameterBindings.get_Item(spe.GetDefinition());
+                        }
+                        catch { }
+                        if (b == null)
+                        {
+                            try { b = doc.ParameterBindings.get_Item(p.Definition); } catch { }
+                        }
+                        bind = b == null ? "null"
+                            : b is InstanceBinding ? "Instance"
+                            : b is TypeBinding ? "Type"
+                            : b is ElementBinding ? "Element"
+                            : b.GetType().Name;
+                    }
+                    catch { }
+                }
+                GrdLog.Log("InstanceParams: PARAM «" + p.Definition.Name + "» pass=" + (isInstance ? "I" : "T") +
+                           " shared=" + p.IsShared + " gid=" + guid + " bind=" + bind +
+                           " storage=" + p.StorageType +
+                           (ro ? " RO" : " RW") + " value=\"" + row.Value + "\"");
+            }
+            catch { }
         }
 
         /// <summary>Человекопонятный тип значения параметра.</summary>
@@ -403,6 +445,16 @@ namespace GrdRevit.Revit
 
             if (edits == null || edits.Count == 0) return res;
 
+            try
+            {
+                GrdLog.Log("InstanceParams.Apply: doc path=\"" + doc.PathName + "\" isWorkshared=" +
+                           doc.IsWorkshared + " isReadOnly=" + doc.IsReadOnly +
+                           " el.IsValidObject=" + el.IsValidObject +
+                           " el.OwnerViewId=" + el.OwnerViewId +
+                           " el.Category.Name=\"" + el.Category?.Name + "\"");
+            }
+            catch { }
+
             using (var t = new Transaction(doc, "JTOOLS: изменить параметры экземпляра"))
             {
                 try
@@ -413,9 +465,8 @@ namespace GrdRevit.Revit
                     {
                         try
                         {
-                            Element target = edit.IsInstance
-                                ? el
-                                : (el as FamilyInstance)?.Symbol;
+                            var symbol = (el as FamilyInstance)?.Symbol;
+                            Element target = edit.IsInstance ? el : symbol;
 
                             if (target == null)
                             {
@@ -426,14 +477,44 @@ namespace GrdRevit.Revit
                             Parameter p = null;
                             try { p = target.LookupParameter(edit.Name); } catch { }
 
+                            GrdLog.Log("InstanceParams.Apply: редактируем «" + edit.Name +
+                                       "» isInstance=" + edit.IsInstance +
+                                       " target=" + (target == el ? "element" : "symbol") +
+                                       " p=" + (p != null ? p.StorageType.ToString() + (IsReadOnlyParam(p) ? " RO" : " RW") : "не найден") +
+                                       " запрошенное значение=\"" + edit.NewValue + "\"");
+
+                            // Имя приходит из строки таблицы, а строка могла быть размечена как
+                            // «экземпляр/тип» не той привязки. Если параметр не найден или только
+                            // для чтения — пробуем другую привязку того же элемента (type↔instance).
+                            if (p == null || IsReadOnlyParam(p))
+                            {
+                                var alternate = edit.IsInstance ? symbol : el;
+                                if (alternate != null && alternate != target)
+                                {
+                                    try
+                                    {
+                                        var alt = alternate.LookupParameter(edit.Name);
+                                        if (alt != null && !IsReadOnlyParam(alt))
+                                        {
+                                            target = alternate;
+                                            p = alt;
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+
                             if (p == null)
                             {
                                 res.Errors.Add("«" + edit.Name + "»: параметр не найден");
+                                GrdLog.Log("InstanceParams.Apply: не найден «" + edit.Name +
+                                           "» isInstance=" + edit.IsInstance);
                                 continue;
                             }
                             if (IsReadOnlyParam(p))
                             {
                                 res.Errors.Add("«" + edit.Name + "»: параметр доступен только для чтения");
+                                GrdLog.Log("InstanceParams.Apply: только чтение «" + edit.Name + "»");
                                 continue;
                             }
                             if (p.StorageType == StorageType.ElementId)
@@ -445,16 +526,22 @@ namespace GrdRevit.Revit
                             var current = ReadValue(p);
                             if (string.Equals(current, edit.NewValue ?? string.Empty, StringComparison.Ordinal))
                             {
+                                GrdLog.Log("InstanceParams.Apply: «" + edit.Name +
+                                           "» без изменений (current=\"" + current + "\")");
                                 continue; // значение не изменилось
                             }
 
                             if (!TryWrite(p, edit.NewValue ?? string.Empty))
                             {
                                 res.Errors.Add("«" + edit.Name + "»: не удалось записать значение \"" + edit.NewValue + "\"");
+                                GrdLog.Log("InstanceParams.Apply: не удалось записать «" + edit.Name +
+                                           "» value=\"" + edit.NewValue + "\" current=\"" + current + "\"");
                                 continue;
                             }
 
                             res.Applied++;
+                            GrdLog.Log("InstanceParams.Apply: «" + edit.Name + "» ок target=" + target.GetType().Name +
+                                       " value=\"" + edit.NewValue + "\" (было \"" + current + "\")");
                             res.Changed.Add(edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\"");
                         }
                         catch (Exception ex)
@@ -472,6 +559,31 @@ namespace GrdRevit.Revit
                     try { if (t.HasStarted()) t.RollBack(); } catch { }
                     res.Errors.Add("Транзакция отменена: " + ex.Message);
                 }
+            }
+
+            // Контроль после коммита: читаем фактическое состояние параметров.
+            foreach (var edit in edits)
+            {
+                try
+                {
+                    var target = edit.IsInstance
+                        ? doc.GetElement(elementId)
+                        : (doc.GetElement(elementId) as FamilyInstance)?.Symbol;
+                    var verb = target?.LookupParameter(edit.Name);
+                    var actual = verb != null ? ReadValue(verb) : string.Empty;
+                    GrdLog.Log("InstanceParamsHandler.Apply verify: «" + edit.Name + "» isInstance=" +
+                               edit.IsInstance + " found=" + (verb != null) +
+                               " RO=" + (verb != null && IsReadOnlyParam(verb)) +
+                               " value=\"" + actual +
+                               "\" (запрошено \"" + edit.NewValue + "\")");
+                    if (verb != null && actual != (edit.NewValue ?? string.Empty) &&
+                        res.Changed.Contains(edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\""))
+                    {
+                        res.Errors.Add("«" + edit.Name + "»: Revit не сохранил значение \"" + edit.NewValue +
+                                       "\" (осталось \"" + actual + "\") — параметр пересчитывается семейством.");
+                    }
+                }
+                catch { }
             }
 
             GrdLog.Log("InstanceParamsHandler: применено " + res.Applied + " из " + res.Total +
@@ -510,14 +622,18 @@ namespace GrdRevit.Revit
                 res.Errors.Add("Снять формулу можно только у экземпляра семейства.");
                 return res;
             }
+            // Сохраняем имя семейства ДО перезагрузки: после LoadFamily старые ссылки
+            // на элементы проекта (в т.ч. Family) становятся недействительными,
+            // и обращение к ним бросает «The referenced object is not valid»,
+            string familyName = family.Name;
             if (family.IsInPlace)
             {
-                res.Errors.Add("Семейство «" + family.Name + "» — встроенное (in-place): для него нет файла семейства, формула не снимается.");
+                res.Errors.Add("Семейство «" + familyName + "» — встроенное (in-place): для него нет файла семейства, формула не снимается.");
                 return res;
             }
             if (!family.IsEditable)
             {
-                res.Errors.Add("Семейство «" + family.Name + "» недоступно для редактирования.");
+                res.Errors.Add("Семейство «" + familyName + "» недоступно для редактирования.");
                 return res;
             }
 
@@ -529,18 +645,24 @@ namespace GrdRevit.Revit
                 famDoc = doc.EditFamily(family);
 
                 int cleared = 0;
+                GrdLog.Log("ClearFormula: семейство «" + familyName + "» параметр «" + paramName + "»");
                 using (var t = new Transaction(famDoc, "JTOOLS: снять формулу параметра"))
                 {
                     t.Start();
                     var fm = famDoc.FamilyManager;
+                    GrdLog.Log("ClearFormula: типов=" + (fm.Types != null ? fm.Types.Cast<FamilyType>().Count() : -1));
                     foreach (FamilyType type in fm.Types)
                     {
                         fm.CurrentType = type;
                         foreach (FamilyParameter fp in fm.GetParameters())
                         {
-                            if (fp.IsInstance != isInstance) continue;
-                            if (!string.Equals(fp.Definition?.Name, paramName, StringComparison.Ordinal)) continue;
-                            if (!fp.IsDeterminedByFormula) continue;
+                            bool idxMatch = string.Equals(fp.Definition?.Name, paramName, StringComparison.Ordinal);
+                            bool hasFormula = false;
+                            try { hasFormula = fp.IsDeterminedByFormula; } catch { }
+                            if (!idxMatch) continue;
+                            GrdLog.Log("ClearFormula: тип «" + (type?.Name ?? "?") + "» fp=\"" +
+                                       (fp.Definition?.Name ?? "?") + "\" formula=" + hasFormula);
+                            if (!hasFormula) continue;
                             fm.SetFormula(fp, null);
                             cleared++;
                         }
@@ -550,7 +672,11 @@ namespace GrdRevit.Revit
 
                 if (cleared == 0)
                 {
-                    res.Errors.Add("Параметр «" + paramName + "» в семействе «" + family.Name + "» не определён формулой — снимать нечего.");
+                    res.Errors.Add("Параметр «" + paramName + "» в семействе «" + familyName +
+                                   "» не определён формулой — снимать нечего. Если параметр добавляется " +
+                                   "из проекта (общий параметр проекта/свойство), в семействе формулы нет, " +
+                                   "и редактировать его можно только на уровне самого проекта.");
+                    GrdLog.Log("ClearFormula: cleared=0 — параметр не определён формулой ни у одного типа");
                     return res;
                 }
 
@@ -559,11 +685,11 @@ namespace GrdRevit.Revit
                 // загрузит семейство под именем файла как НОВОЕ семейство, а исходное
                 // (всё ещё с формулой) останется в проекте — параметр так и будет
                 // доступен только для чтения.
-                tempPath = Path.Combine(Path.GetTempPath(), SafeFamilyFileName(family.Name));
+                tempPath = Path.Combine(Path.GetTempPath(), SafeFamilyFileName(familyName));
                 if (File.Exists(tempPath)) File.Delete(tempPath);
 
                 Family loadedFamily = null;
-                using (var t = new Transaction(doc, "JTOOLS: перезагрузка семейства «" + family.Name + "»"))
+                using (var t = new Transaction(doc, "JTOOLS: перезагрузка семейства «" + familyName + "»"))
                 {
                     t.Start();
                     try
@@ -591,25 +717,81 @@ namespace GrdRevit.Revit
 
                 if (loadedFamily == null)
                 {
-                    res.Errors.Add("Семейство «" + family.Name + "» не перезагрузилось — снять формулу не удалось.");
+                    res.Errors.Add("Семейство «" + familyName + "» не перезагрузилось — снять формулу не удалось.");
+                    GrdLog.Log("ClearFormula: LoadFamily вернул false — перезагрузка не удалась");
                     return res;
                 }
+                GrdLog.Log("ClearFormula: перезагрузка успешна (loadedFamily=" + loadedFamily.Name + ")");
 
                 // Жёсткая проверка: после перезагрузки параметр в проекте обязан
                 // стать редактируемым. Если он остался только для чтения — формула
                 // не снята (или её значение по-прежнему задаёт другой параметр).
-                var newEl = doc.GetElement(elementId);
-                var newSym = (newEl as FamilyInstance)?.Symbol;
-                var afterParam = newSym?.LookupParameter(paramName);
-                if (afterParam == null || IsReadOnlyParam(afterParam))
+                // ВАЖНО: static-ссылки на Family/элемент после LoadFamily недействительны,
+                // поэтому ищем семейство (и тип) заново по имени.
+                Family newFamily = null;
+                try
                 {
-                    res.Errors.Add("Параметр «" + paramName + "» в семействе «" + family.Name +
+                    newFamily = new FilteredElementCollector(doc).OfClass(typeof(Family))
+                        .Cast<Family>()
+                        .FirstOrDefault(f => string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase));
+                    if (newFamily == null)
+                    {
+                        newFamily = new FilteredElementCollector(doc).OfClass(typeof(Family))
+                            .Cast<Family>()
+                            .Where(f => f.Name.IndexOf(familyName, StringComparison.OrdinalIgnoreCase) >= 0)
+                            .FirstOrDefault();
+                    }
+                }
+                catch { }
+
+                Parameter symParam = null;
+                int symCount = 0;
+                if (newFamily != null)
+                {
+                    try
+                    {
+                        symCount = newFamily.GetFamilySymbolIds().Count;
+                        foreach (var sid in newFamily.GetFamilySymbolIds())
+                        {
+                            var sym = doc.GetElement(sid) as FamilySymbol;
+                            symParam = sym?.LookupParameter(paramName);
+                            if (symParam != null) break;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Решающей является точка, где параметр видит пользователь — элемент.
+                // Если по нему параметр теперь редактируем, операция удалась, даже если
+                // проверка «по символу» этого не подтвердила (например, система отдаёт
+                // другой параметр того же имени с другой привязкой/из проекта).
+                FamilyInstance el2 = null;
+                Parameter afterParam = null;
+                try
+                {
+                    el2 = doc.GetElement(elementId) as FamilyInstance;
+                    afterParam = el2?.LookupParameter(paramName);
+                }
+                catch { }
+                if (afterParam == null) afterParam = symParam;
+
+                bool fRef = afterParam != null && IsReadOnlyParam(afterParam);
+                bool fSym = symParam != null && IsReadOnlyParam(symParam);
+                GrdLog.Log("InstanceParamsHandler.ClearFormula verify: familyName=\"" + familyName +
+                           "\" newFamily=" + (newFamily != null ? newFamily.Name : "null") +
+                           " symbols=" + symCount +
+                           " symParam=" + (symParam != null ? symParam.StorageType.ToString() + (fSym ? " RO" : " RW") : "null") +
+                           " elParam=" + (afterParam != null ? afterParam.StorageType.ToString() + (fRef ? " RO" : " RW") : "null"));
+
+                if (afterParam == null || fRef)
+                {
+                    res.Errors.Add("Параметр «" + paramName + "» в семействе «" + familyName +
                                    "» остался доступен только для чтения — формула не снята.");
                     return res;
                 }
 
                 res.Applied = 1;
-                res.Changed.Add(paramName + ": формула снята у семейства «" + family.Name + "» (все типы)");
+                res.Changed.Add(paramName + ": формула снята у семейства «" + familyName + "» (все типы)");
             }
             catch (Exception ex)
             {
@@ -631,19 +813,17 @@ namespace GrdRevit.Revit
         }
 
         /// <summary>Имя временного RFA-файла = имя семейства (+.rfa), с заменой
-        /// недопустимых в имени файла символов. Имя файла должно совпадать с именем
-        /// семейства в проекте, иначе LoadFamily создаст НОВОЕ семейство вместо
-        /// замены существующего.</summary>
+        /// недопустимых в имени файла символов.</summary>
         private static string SafeFamilyFileName(string familyName)
         {
             var s = string.IsNullOrEmpty(familyName) ? "Family" : familyName;
-            foreach (var c in Path.GetInvalidFileNameChars())
+            foreach (var c in System.IO.Path.GetInvalidFileNameChars())
                 s = s.Replace(c, '_');
             return s + ".rfa";
         }
 
-        /// <summary>Опции перезагрузки семейства: заменить данные семейства значениями из файла.</summary>
-        private sealed class OverwriteFamilyLoadOptions : IFamilyLoadOptions
+        /// <summary>Правила перезагрузки семейства: перезаписывать параметры типа в проекте.</summary>
+        private class OverwriteFamilyLoadOptions : IFamilyLoadOptions
         {
             public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
             {
@@ -675,21 +855,32 @@ namespace GrdRevit.Revit
                 return false;
             }
 
-            try { p.SetValueString(newValue); return true; } catch { }
+            // Основной путь для текстовых: Set напрямую (то же, что делает UI-редактор).
+            // ВАЖНО: Revit отражает новое значение в AsString() для этого параметра только
+            // после коммита — немедленное чтение в транзакции возвращает старое. Поэтому
+            // доверяем bool-результату Set, а фактическая сверка выполняется ПОСЛЕ коммита
+            // (цикл verify в Apply). SetValueString раньше вызывался ПЕРВЫМ и его bool
+            // игнорировался — при тихом отказе возвращали success, не записав ничего.
+            bool okSet = false;
+            try { okSet = p.Set(newValue); } catch (Exception ex) { GrdLog.Log("TryWrite.Set EXCEPTION (" + ex.GetType().Name + "): " + ex.Message); }
+            GrdLog.Log("TryWrite.Set(" + (p.Definition != null ? p.Definition.Name : "?") + ")=" + okSet);
+            if (okSet) return true;
+
+            // Запасной путь: значение в формате отображения.
+            bool okVs = false;
+            try { okVs = p.SetValueString(newValue); } catch (Exception ex) { GrdLog.Log("TryWrite.SetValueString EXCEPTION: " + ex.Message); }
+            GrdLog.Log("TryWrite.SetValueString=" + okVs);
+            if (okVs) return true;
 
             try
             {
                 switch (p.StorageType)
                 {
-                    case StorageType.String:
-                        p.Set(newValue);
-                        return true;
                     case StorageType.Integer:
                         if (int.TryParse(newValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ||
                             int.TryParse(newValue, NumberStyles.Integer, CultureInfo.CurrentCulture, out i))
                         {
-                            p.Set(i);
-                            return true;
+                            return p.Set(i);
                         }
                         return false;
                     case StorageType.Double:
@@ -700,20 +891,19 @@ namespace GrdRevit.Revit
                             {
                                 var spec = p.Definition?.GetDataType();
                                 double v = spec == null ? d : UnitUtils.ConvertToInternalUnits(d, spec);
-                                p.Set(v);
+                                return p.Set(v);
                             }
                             catch
                             {
-                                p.Set(d);
+                                return p.Set(d);
                             }
-                            return true;
                         }
                         return false;
                 }
             }
             catch (Exception ex)
             {
-                GrdLog.Log("InstanceParamsHandler.TryWrite EXCEPTION: " + ex);
+                GrdLog.Log("InstanceParamsHandler.TryWrite switch EXCEPTION: " + ex);
             }
             return false;
         }
