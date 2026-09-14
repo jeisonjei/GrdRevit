@@ -68,11 +68,23 @@ namespace GrdRevit.Ui
             {
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    FilterBox.Focus();
-                    FilterBox.SelectAll();
+                    FocusSearch();
                 }), System.Windows.Threading.DispatcherPriority.Input);
                 Reload();
             };
+        }
+
+        /// <summary>Фокус в поле поиска по умолчанию: вызывается при открытии окна
+        /// и после каждого обновления списка (сетка могла перехватить фокус).</summary>
+        private void FocusSearch()
+        {
+            try
+            {
+                FilterBox.Focus();
+                Keyboard.Focus(FilterBox);
+                FilterBox.SelectAll();
+            }
+            catch { }
         }
 
         private ViewsManagerHandler Handler()
@@ -139,6 +151,8 @@ namespace GrdRevit.Ui
             ApplyFilter();
             StatusText.Text = "Готово.";
             GrdLog.Log("ViewsManagerWindow: строк=" + _all.Count);
+            // Возвращаем фокус в поиск: после перезаполнения сетки он может уйти в грид.
+            Dispatcher.BeginInvoke(new Action(FocusSearch), System.Windows.Threading.DispatcherPriority.Input);
         }
 
         private void ApplyFilter()
