@@ -241,7 +241,7 @@ namespace GrdRevit.Ui
                     {
                         _busy = false;
                     }
-                });
+                }, _selectedMode);
                 ev.Raise();
             }
             catch (Exception ex)
