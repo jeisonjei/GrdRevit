@@ -24,6 +24,13 @@ namespace GrdRevit.Ui
             set => Set(ref _name, value);
         }
 
+        private string _sheetNumber;
+        public string SheetNumber
+        {
+            get => _sheetNumber;
+            set => Set(ref _sheetNumber, value);
+        }
+
         private bool _marked;
         public bool Marked
         {
@@ -38,6 +45,7 @@ namespace GrdRevit.Ui
             KindText = v.KindText;
             Scale = v.Scale;
             _name = v.Name;
+            _sheetNumber = v.SheetNumber;
         }
     }
 
@@ -135,13 +143,19 @@ namespace GrdRevit.Ui
 
         private void ApplyFilter()
         {
-            if (FilterBox == null || ChkSection == null || ChkPlan == null || Chk3d == null || ChkSheet == null || RbStartsWith == null || RbContains == null) return;
+            if (FilterBox == null || ChkSection == null || ChkPlan == null || Chk3d == null || ChkSheet == null || ChkSchedule == null || RbStartsWith == null || RbContains == null) return;
             var search = (FilterBox.Text ?? string.Empty).Trim();
             bool showSection = ChkSection.IsChecked == true;
             bool showPlan = ChkPlan.IsChecked == true;
             bool show3d = Chk3d.IsChecked == true;
             bool showSheet = ChkSheet.IsChecked == true;
+            bool showSchedule = ChkSchedule.IsChecked == true;
             bool startsWith = RbStartsWith.IsChecked == true;
+
+            if (SheetNumberCol != null)
+                SheetNumberCol.Visibility = showSheet && !showSection && !showPlan && !show3d && !showSchedule
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
 
             if (Rows == null) return;
 
@@ -152,7 +166,8 @@ namespace GrdRevit.Ui
                               || (showPlan && r.KindKey == "plan")
                               || (show3d && r.KindKey == "3d")
                               || (showSheet && r.KindKey == "sheet")
-                              || (showSection && showPlan && show3d && showSheet && r.KindKey == "other");
+                              || (showSchedule && r.KindKey == "schedule")
+                              || (showSection && showPlan && show3d && showSheet && showSchedule && r.KindKey == "other");
                 bool nameOk = search.Length == 0;
                 if (!nameOk)
                 {
@@ -196,7 +211,8 @@ namespace GrdRevit.Ui
         private void OnGridDoubleClick(object sender, MouseButtonEventArgs e)
         {
             if (ViewsGrid.CurrentCell.Column == null) return;
-            if (ViewsGrid.CurrentCell.Column.Header?.ToString() == "Имя вида")
+            var header = ViewsGrid.CurrentCell.Column.Header?.ToString();
+            if (header == "Имя вида" || header == "Номер листа")
                 ViewsGrid.BeginEdit();
         }
 
@@ -204,8 +220,17 @@ namespace GrdRevit.Ui
         {
             if (e.EditAction != DataGridEditAction.Commit) return;
             if (!(e.Row.Item is ViewsRow row)) return;
-            var name = (e.EditingElement as TextBox)?.Text ?? string.Empty;
-            name = name.Trim();
+            var text = (e.EditingElement as TextBox)?.Text ?? string.Empty;
+            var header = e.Column.Header?.ToString();
+            if (header == "Номер листа")
+                CommitSheetNumber(row, text);
+            else
+                CommitName(row, text);
+        }
+
+        private void CommitName(ViewsRow row, string text)
+        {
+            var name = text.Trim();
             if (string.Equals(row.Name, name, StringComparison.Ordinal)) return;
             if (name.Length == 0)
             {
@@ -216,6 +241,21 @@ namespace GrdRevit.Ui
             var original = row.Name;
             row.Name = name;
             RequestRename(row, name, original);
+        }
+
+        private void CommitSheetNumber(ViewsRow row, string text)
+        {
+            var number = text.Trim();
+            if (string.Equals(row.SheetNumber, number, StringComparison.Ordinal)) return;
+            if (number.Length == 0)
+            {
+                SnackBar.Show("Номер листа не может быть пустым.", SnackBarKind.Error);
+                Reload();
+                return;
+            }
+            var original = row.SheetNumber;
+            row.SheetNumber = number;
+            RequestSheetNumber(row, number, original);
         }
 
         private void RequestRename(ViewsRow row, string name, string original)
@@ -242,6 +282,35 @@ namespace GrdRevit.Ui
                 catch (Exception ex)
                 {
                     GrdLog.Log("ViewsManagerWindow.RequestRename callback EXCEPTION: " + ex);
+                }
+            });
+            Raise();
+        }
+
+        private void RequestSheetNumber(ViewsRow row, string number, string original)
+        {
+            var handler = Handler();
+            if (handler == null) return;
+            StatusText.Text = "Изменение номера листа «" + row.Name + "» → «" + number + "»…";
+            handler.QueueSetSheetNumber(row.Id, number, result =>
+            {
+                try
+                {
+                    if (result.Ok)
+                    {
+                        SnackBar.Show(result.Message, SnackBarKind.Success);
+                        StatusText.Text = "Готово.";
+                    }
+                    else
+                    {
+                        SnackBar.Show(result.Error, SnackBarKind.Error);
+                        StatusText.Text = result.Error;
+                        row.SheetNumber = original;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("ViewsManagerWindow.RequestSheetNumber callback EXCEPTION: " + ex);
                 }
             });
             Raise();

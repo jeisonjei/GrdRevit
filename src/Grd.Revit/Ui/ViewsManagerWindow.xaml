@@ -16,7 +16,7 @@
     <DockPanel Margin="10">
         <GroupBox DockPanel.Dock="Bottom" Header="Действия" Margin="0,8,0,0" Padding="6">
             <StackPanel>
-                <TextBlock Text="Отмечайте виды чекбоксами слева для групповых операций. Переименование — двойной щелчок по имени или F2. «Дублировать» создаёт копию и открывает имя для правки. «✓ Добавить префикс…» добавит текст в начало имён всех отмеченных видов."
+                <TextBlock Text="Номер листа меняется в строке листа колонкой «Номер листа» (она появляется, когда выбран только фильтр «Листы»). Отмечайте виды чекбоксами слева для групповых операций. Переименование — двойной щелчок по имени или F2. «✓ Добавить префикс…» добавит текст в начало имён всех отмеченных видов."
                            TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Обновить список" Click="OnRefresh" Style="{StaticResource GhostButtonStyle}" Padding="12,5"/>
@@ -72,6 +72,8 @@
                               Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
                     <CheckBox x:Name="ChkSheet" Content="Листы" IsChecked="True" VerticalAlignment="Center"
                               Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
+                    <CheckBox x:Name="ChkSchedule" Content="Спецификации" IsChecked="True" VerticalAlignment="Center"
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
                     <TextBlock x:Name="CountText" VerticalAlignment="Center"
                                Foreground="{StaticResource TextSecondaryBrush}"/>
                 </StackPanel>
@@ -100,6 +102,20 @@
                                             Binding="{Binding Marked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                             CanUserSort="False"/>
                     <DataGridTextColumn Header="Имя вида" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="2*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Margin" Value="6,0"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                        <DataGridTextColumn.EditingElementStyle>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Padding" Value="4,2"/>
+                            </Style>
+                        </DataGridTextColumn.EditingElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn x:Name="SheetNumberCol" Header="Номер листа" Visibility="Collapsed"
+                                        Binding="{Binding SheetNumber, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="100">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>

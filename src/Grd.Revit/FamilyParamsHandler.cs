@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -193,6 +194,24 @@ namespace GrdRevit.Revit
                            ", OwnerFamily=" + (fdoc.OwnerFamily?.Name ?? "<null>") +
                            ", PathName=" + (fdoc.PathName ?? "<н/з>"));
 
+                // Снимаем текущие значения параметров со сменой привязки «экземпляр ↔ тип»:
+                // после LoadFamily Revit обнуляет их, и мы вернём их обратно (RestoreBinding).
+                // Момент важен: правки сделаны только в документе семейства, проект не тронут.
+                var bindSnapshots = new List<BindingSnapshot>();
+                foreach (var op in ops)
+                {
+                    if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                    if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+                    try
+                    {
+                        bindSnapshots.Add(CaptureBinding(doc, familyName, op.Name, wasInstance: !op.IsInstance));
+                    }
+                    catch (Exception ex)
+                    {
+                        GrdLog.Log("FamilyParamsHandler: capture «" + op.Name + "» EXCEPTION: " + ex);
+                    }
+                }
+
                 string tempPath = null;
                 bool loaded = false;
                 var beforeNames = FamilyNames(doc);
@@ -240,6 +259,26 @@ namespace GrdRevit.Revit
                 }
                 if (!loaded)
                     return "! «" + familyName + "»: LoadFamily вернул false";
+
+                // Возвращаем значения параметров со сменой привязки (см. CaptureBinding).
+                if (bindSnapshots.Count > 0)
+                {
+                    using (var rt = new Transaction(doc, "JTOOLS: восстановить значения параметров"))
+                    {
+                        try
+                        {
+                            rt.Start();
+                            foreach (var snap in bindSnapshots)
+                                RestoreBinding(doc, familyName, snap);
+                            rt.Commit();
+                        }
+                        catch (Exception ex)
+                        {
+                            try { if (rt.HasStarted()) rt.RollBack(); } catch { }
+                            GrdLog.Log("FamilyParamsHandler: restore «" + familyName + "» EXCEPTION: " + ex);
+                        }
+                    }
+                }
 
                 VerifyAfterLoad(doc, familyName, beforeNames, added);
             }
@@ -494,18 +533,222 @@ namespace GrdRevit.Revit
 
         private sealed class FamilyLoadOptionsImpl : IFamilyLoadOptions
         {
+            // overwriteParameterValues = false: при перезагрузке семейства значения
+            // параметров из проекта сохраняются (в семейство перезаписываются только
+            // новые параметры). Иначе Revit затирает заполненные в проекте значения
+            // значениями из RFA (пустыми), в т.ч. при смене привязки «экземпляр ↔ тип».
             public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
             {
-                overwriteParameterValues = true;
+                overwriteParameterValues = false;
                 return true;
             }
 
             public bool OnSharedFamilyFound(Family sharedFamily, bool familyInUse, out FamilySource source, out bool overwriteParameterValues)
             {
                 source = FamilySource.Family;
-                overwriteParameterValues = true;
+                overwriteParameterValues = false;
                 return true;
             }
+        }
+
+        /// <summary>Снимок значений параметра, у которого меняется привязка
+        /// «экземпляр ↔ тип», до перезагрузки семейства. После LoadFamily значения
+        /// восстанавливаются (см. RestoreBinding), иначе Revit их обнуляет.</summary>
+        private sealed class BindingSnapshot
+        {
+            public string ParamName = string.Empty;
+            public bool WasInstance;                                  // привязка до изменения
+            public readonly Dictionary<long, string> InstanceValues = new Dictionary<long, string>(); // elementId -> значение
+            public readonly Dictionary<long, long> ElementToSymbol = new Dictionary<long, long>();    // elementId -> symbolId
+            public readonly Dictionary<long, string> TypeValues = new Dictionary<long, string>();     // symbolId -> значение
+        }
+
+        private static BindingSnapshot CaptureBinding(Document doc, string familyName, string paramName, bool wasInstance)
+        {
+            var snap = new BindingSnapshot { ParamName = paramName, WasInstance = wasInstance };
+            if (wasInstance)
+            {
+                foreach (FamilyInstance fi in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+                {
+                    try
+                    {
+                        if (fi.Symbol?.Family == null ||
+                            !string.Equals(fi.Symbol.Family.Name, familyName, StringComparison.OrdinalIgnoreCase)) continue;
+                        var p = fi.LookupParameter(paramName);
+                        if (p == null) continue;
+                        snap.InstanceValues[fi.Id.Value] = ReadParamValue(p);
+                        snap.ElementToSymbol[fi.Id.Value] = fi.Symbol.Id.Value;
+                    }
+                    catch { }
+                }
+            }
+            else
+            {
+                foreach (FamilySymbol sym in new FilteredElementCollector(doc).OfClass(typeof(FamilySymbol)))
+                {
+                    try
+                    {
+                        if (sym?.Family == null ||
+                            !string.Equals(sym.Family.Name, familyName, StringComparison.OrdinalIgnoreCase)) continue;
+                        var p = sym.LookupParameter(paramName);
+                        if (p == null) continue;
+                        snap.TypeValues[sym.Id.Value] = ReadParamValue(p);
+                    }
+                    catch { }
+                }
+            }
+            GrdLog.Log("FamilyParamsHandler.Capture: «" + paramName + "» привязка=" +
+                       (snap.WasInstance ? "экз." : "тип") +
+                       ", экземпляров=" + snap.InstanceValues.Count +
+                       ", типов=" + snap.TypeValues.Count);
+            return snap;
+        }
+
+        /// <summary>Восстанавливает значения параметра после смены привязки.
+        /// <para>экземпляр → тип: у типа одно значение на тип — берём значение,
+        /// общее для всех экземпляров типа, либо самое частое / первое непустое.</para>
+        /// <para>тип → экземпляр: раздаём каждому экземпляру сохранённое значение его типа.</para>
+        /// </summary>
+        private static void RestoreBinding(Document doc, string familyName, BindingSnapshot snap)
+        {
+            int set = 0;
+            if (snap.WasInstance)
+            {
+                var perType = new Dictionary<long, Dictionary<string, int>>();
+                foreach (var kv in snap.ElementToSymbol)
+                {
+                    if (!snap.InstanceValues.TryGetValue(kv.Key, out var v)) continue;
+                    if (!perType.TryGetValue(kv.Value, out var counts))
+                    {
+                        counts = new Dictionary<string, int>();
+                        perType[kv.Value] = counts;
+                    }
+                    counts[v] = counts.TryGetValue(v, out var c) ? c + 1 : 1;
+                }
+                foreach (var pair in perType)
+                {
+                    try
+                    {
+                        var sym = doc.GetElement(new ElementId(pair.Key)) as FamilySymbol;
+                        if (sym == null) continue;
+                        var value = PickValue(pair.Value);
+                        if (string.IsNullOrEmpty(value)) continue;
+                        var p = sym.LookupParameter(snap.ParamName);
+                        if (p != null && !p.IsReadOnly && TrySetParamValue(p, value)) set++;
+                    }
+                    catch { }
+                }
+            }
+            else
+            {
+                foreach (FamilyInstance fi in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+                {
+                    try
+                    {
+                        if (fi.Symbol?.Family == null ||
+                            !string.Equals(fi.Symbol.Family.Name, familyName, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!snap.TypeValues.TryGetValue(fi.Symbol.Id.Value, out var value)) continue;
+                        if (string.IsNullOrEmpty(value)) continue;
+                        var p = fi.LookupParameter(snap.ParamName);
+                        if (p != null && !p.IsReadOnly && TrySetParamValue(p, value)) set++;
+                    }
+                    catch { }
+                }
+            }
+            GrdLog.Log("FamilyParamsHandler.Restore: «" + snap.ParamName + "» установлено=" + set);
+        }
+
+        /// <summary>Выбирает значение для типа при слиянии экземпляров в один тип:
+        /// единственное значение, иначе самое частое непустое (первое по порядку при равенстве).
+        /// Пустые значения игнорируются — их нечего восстанавливать.</summary>
+        private static string PickValue(Dictionary<string, int> counts)
+        {
+            string best = string.Empty;
+            int bestCount = -1;
+            foreach (var kv in counts)
+            {
+                if (string.IsNullOrEmpty(kv.Key)) continue;
+                if (kv.Value > bestCount)
+                {
+                    best = kv.Key;
+                    bestCount = kv.Value;
+                }
+            }
+            return best;
+        }
+
+        private static string ReadParamValue(Parameter p)
+        {
+            try
+            {
+                if (!p.HasValue) return string.Empty;
+                if (p.StorageType == StorageType.String) return p.AsString() ?? string.Empty;
+                if (p.StorageType == StorageType.Integer)
+                {
+                    try { var v = p.AsValueString(); if (!string.IsNullOrEmpty(v)) return v; } catch { }
+                    return p.AsInteger().ToString(CultureInfo.InvariantCulture);
+                }
+                if (p.StorageType == StorageType.Double)
+                {
+                    try { var v = p.AsValueString(); if (!string.IsNullOrEmpty(v)) return v; } catch { }
+                    return p.AsDouble().ToString("0.####", CultureInfo.InvariantCulture);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.ReadParamValue EXCEPTION: " + ex);
+            }
+            return string.Empty;
+        }
+
+        private static bool TrySetParamValue(Parameter p, string value)
+        {
+            if (p == null || value == null) return false;
+            try
+            {
+                if (p.IsReadOnly) return false;
+                var spec = p.Definition?.GetDataType();
+                if (spec != null && spec == SpecTypeId.Boolean.YesNo)
+                {
+                    var b = NormalizeBool(value);
+                    if (b.HasValue) return p.Set(b.Value ? 1 : 0);
+                    return false;
+                }
+                if (p.Set(value)) return true;
+                if (p.SetValueString(value)) return true;
+                switch (p.StorageType)
+                {
+                    case StorageType.Integer:
+                        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ||
+                            int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out i))
+                            return p.Set(i);
+                        return false;
+                    case StorageType.Double:
+                        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ||
+                            double.TryParse(value, NumberStyles.Float, CultureInfo.CurrentCulture, out d))
+                        {
+                            try { return p.Set(spec == null ? d : UnitUtils.ConvertToInternalUnits(d, spec)); }
+                            catch { return p.Set(d); }
+                        }
+                        return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.TrySetParamValue EXCEPTION: " + ex);
+            }
+            return false;
+        }
+
+        private static bool? NormalizeBool(string v)
+        {
+            if (string.IsNullOrWhiteSpace(v)) return null;
+            var s = v.Trim();
+            if (s.Length == 1 && (s[0] == '0' || s[0] == '1')) return s[0] == '1';
+            var lower = s.ToLowerInvariant();
+            if (lower == "да" || lower == "yes" || lower == "true") return true;
+            if (lower == "нет" || lower == "no" || lower == "false") return false;
+            return null;
         }
     }
 }

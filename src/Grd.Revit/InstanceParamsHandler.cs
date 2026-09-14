@@ -8,7 +8,9 @@ using Autodesk.Revit.UI;
 
 namespace GrdRevit.Revit
 {
-    /// <summary>Параметр выбранного элемента: имя, признак «экземпляр/тип», текущее значение.</summary>
+    /// <summary>Параметр выбранного элемента: имя, признак «экземпляр/тип», текущее значение.
+    /// При выборе нескольких элементов значение агрегируется: если у разных типов значения
+    /// различаются — Diverse=true, а Value пуст (в окне показывается «несколько значений»).</summary>
     public sealed class ElementParamValue
     {
         public string Name = string.Empty;
@@ -17,6 +19,15 @@ namespace GrdRevit.Revit
         public string Group = string.Empty;
         public bool IsReadOnly;
         public string Value = string.Empty;
+        public bool Diverse;
+        public int MatchCount = 1;
+    }
+
+    /// <summary>Информация о выбранном элементе для заголовка окна и отчётов об ошибках.</summary>
+    public sealed class ElementRefInfo
+    {
+        public long Id;
+        public string Name = string.Empty;
     }
 
     /// <summary>Результат чтения параметров экземпляра (параметры экземпляра + параметры типа).</summary>
@@ -26,6 +37,7 @@ namespace GrdRevit.Revit
         public string ElementName = string.Empty;
         public bool IsFamilyInstance;
         public List<ElementParamValue> Params = new List<ElementParamValue>();
+        public List<ElementRefInfo> Elements = new List<ElementRefInfo>();
     }
 
     /// <summary>Изменение одного параметра (экземплярного или типового) к применению.</summary>
@@ -46,10 +58,12 @@ namespace GrdRevit.Revit
     }
 
     /// <summary>
-    /// Читает и изменяет значения ВСЕХ параметров выбранного экземпляра семейства
-    /// без открытия редактора семейства. Параметры «экземпляр» меняются только у
-    /// выбранного элемента; параметры «тип» меняются у типа — то есть у всех
-    /// экземпляров этого типа (об этом пользователь предупреждается в окне).
+    /// Читает и изменяет значения ВСЕХ параметров выбранных экземпляров семейств
+    /// без открытия редактора семейства. Можно выбрать несколько экземпляров разных
+    /// типов: значения, указанные в окне, применяются к параметрам ВСЕХ выбранных
+    /// элементов (по имени параметра). Параметры «экземпляр» меняются только у
+    /// выбранных элементов; параметры «тип» меняются у типов — то есть у всех
+    /// экземпляров этих типов (об этом пользователь предупреждается в окне).
     /// Моделесс-окно не может обращаться к API напрямую — запросы ставятся в
     /// очередь и выполняются Revit-потоком через ExternalEvent.
     /// </summary>
@@ -63,7 +77,7 @@ namespace GrdRevit.Revit
         private sealed class Request
         {
             public Kind Kind;
-            public ElementId ElementId;
+            public List<ElementId> ElementIds = new List<ElementId>();
             public List<InstanceParamEdit> Edits;
             public string ClearName;
             public bool ClearIsInstance;
@@ -71,27 +85,27 @@ namespace GrdRevit.Revit
             public Action<InstanceParamsResult> ApplyCallback;
         }
 
-        public void QueueRead(ElementId elementId, Action<ElementParamsResult> callback)
+        public void QueueRead(List<ElementId> elementIds, Action<ElementParamsResult> callback)
         {
             lock (_sync)
             {
                 _requests.Enqueue(new Request
                 {
                     Kind = Kind.Read,
-                    ElementId = elementId,
+                    ElementIds = new List<ElementId>(elementIds ?? new List<ElementId>()),
                     ReadCallback = callback
                 });
             }
         }
 
-        public void QueueApply(ElementId elementId, List<InstanceParamEdit> edits, Action<InstanceParamsResult> callback)
+        public void QueueApply(List<ElementId> elementIds, List<InstanceParamEdit> edits, Action<InstanceParamsResult> callback)
         {
             lock (_sync)
             {
                 _requests.Enqueue(new Request
                 {
                     Kind = Kind.Apply,
-                    ElementId = elementId,
+                    ElementIds = new List<ElementId>(elementIds ?? new List<ElementId>()),
                     Edits = edits ?? new List<InstanceParamEdit>(),
                     ApplyCallback = callback
                 });
@@ -105,7 +119,7 @@ namespace GrdRevit.Revit
                 _requests.Enqueue(new Request
                 {
                     Kind = Kind.ClearFormula,
-                    ElementId = elementId,
+                    ElementIds = new List<ElementId> { elementId },
                     ClearName = paramName ?? string.Empty,
                     ClearIsInstance = isInstance,
                     ApplyCallback = callback
@@ -138,15 +152,16 @@ namespace GrdRevit.Revit
                 {
                     if (req.Kind == Kind.Read)
                     {
-                        req.ReadCallback?.Invoke(Read(app, req.ElementId));
+                        req.ReadCallback?.Invoke(Read(app, req.ElementIds));
                     }
                     else if (req.Kind == Kind.ClearFormula)
                     {
-                        req.ApplyCallback?.Invoke(ClearFormula(app, req.ElementId, req.ClearName, req.ClearIsInstance));
+                        var single = req.ElementIds.Count > 0 ? req.ElementIds[0] : ElementId.InvalidElementId;
+                        req.ApplyCallback?.Invoke(ClearFormula(app, single, req.ClearName, req.ClearIsInstance));
                     }
                     else
                     {
-                        req.ApplyCallback?.Invoke(Apply(app, req.ElementId, req.Edits));
+                        req.ApplyCallback?.Invoke(Apply(app, req.ElementIds, req.Edits));
                     }
                 }
                 catch (Exception ex)
@@ -164,7 +179,7 @@ namespace GrdRevit.Revit
             }
         }
 
-        private static ElementParamsResult Read(UIApplication app, ElementId elementId)
+        private static ElementParamsResult Read(UIApplication app, List<ElementId> elementIds)
         {
             var res = new ElementParamsResult();
             var doc = app?.ActiveUIDocument?.Document;
@@ -174,35 +189,56 @@ namespace GrdRevit.Revit
                 return res;
             }
 
-            Element el = null;
-            try { el = doc.GetElement(elementId); } catch { }
-            if (el == null)
+            if (elementIds == null || elementIds.Count == 0)
             {
-                res.Error = "Выбранный элемент не найден в документе.";
+                res.Error = "Нет выбранных элементов.";
                 return res;
             }
 
-            GrdLog.Log("InstanceParamsHandler.Read: id=" + elementId + " класс=" + el.GetType().Name +
-                       " имя=\"" + el.Name + "\" sym=" + ((el as FamilyInstance)?.Symbol?.Name ?? "-") +
-                       " fam=" + ((el as FamilyInstance)?.Symbol?.Family?.Name ?? "-"));
-
-            res.IsFamilyInstance = el is FamilyInstance;
-            res.ElementName = el.Name;
-
-            var list = new List<ElementParamValue>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var p in SafeOrderedParameters(el, instance: true))
-                AddParam(list, seen, p, isInstance: true, doc);
-            res.ElementName = DescribeElement(el);
-
-            if (el is FamilyInstance fi && fi.Symbol != null)
+            var elements = new List<Element>();
+            foreach (var id in elementIds)
             {
-                foreach (var p in SafeOrderedParameters(fi.Symbol, instance: false))
-                    AddParam(list, seen, p, isInstance: false, doc);
+                Element el = null;
+                try { el = doc.GetElement(id); } catch { }
+                if (el != null) elements.Add(el);
+            }
+            if (elements.Count == 0)
+            {
+                res.Error = "Выбранные элементы не найдены в документе.";
+                return res;
+            }
+            if (elements.Any(e => !(e is FamilyInstance)))
+            {
+                res.Error = "Один из выбранных элементов не является экземпляром семейства.";
+                return res;
             }
 
-            res.Params = list
+            res.IsFamilyInstance = true;
+            res.Elements = elements.Select(e => new ElementRefInfo { Id = e.Id.Value, Name = DescribeElement(e) }).ToList();
+            res.ElementName = DescribeSelection(elements);
+            bool verbose = elements.Count == 1;
+
+            GrdLog.Log("InstanceParamsHandler.Read: элементов=" + elements.Count +
+                       " (id=" + string.Join(",", elements.Select(e => e.Id.Value)) + ")");
+
+            // Агрегация по имени параметра и привязке (экземпляр/тип): строки с одинаковым
+            // именем у разных выбранных элементов сливаются в одну. Значение считается
+            // «разным» (Diverse), если у разных типов оно различается.
+            var agg = new Dictionary<string, ElementParamValue>();
+            foreach (var el in elements)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var p in SafeOrderedParameters(el, instance: true))
+                    AddParam(agg, seen, p, isInstance: true, doc, verbose);
+                var fi = el as FamilyInstance;
+                if (fi?.Symbol != null)
+                {
+                    foreach (var p in SafeOrderedParameters(fi.Symbol, instance: false))
+                        AddParam(agg, seen, p, isInstance: false, doc, verbose);
+                }
+            }
+
+            res.Params = agg.Values
                 .OrderBy(p => p.IsInstance ? 0 : 1)
                 .ThenBy(p => p.Group, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -210,6 +246,35 @@ namespace GrdRevit.Revit
 
             GrdLog.Log("InstanceParamsHandler: «" + res.ElementName + "» параметров=" + res.Params.Count);
             return res;
+        }
+
+        private static string DescribeSelection(List<Element> elements)
+        {
+            try
+            {
+                if (elements.Count == 1) return DescribeElement(elements[0]);
+                var names = elements.Select(DescribeElement)
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var sb = new System.Text.StringBuilder();
+                sb.Append("Выбрано ").Append(elements.Count).Append(" экземпляров");
+                if (names.Count == 1)
+                {
+                    sb.Append(" семейства «").Append(names[0]).Append("»");
+                }
+                else
+                {
+                    sb.Append(" семейств (").Append(names.Count).Append(" типов): ");
+                    sb.Append(string.Join("; ", names.Take(3)));
+                    if (names.Count > 3) sb.Append(" и др.");
+                }
+                return sb.ToString();
+            }
+            catch
+            {
+                return elements.Count + " элементов";
+            }
         }
 
         private static IEnumerable<Parameter> SafeOrderedParameters(Element el, bool instance)
@@ -247,10 +312,21 @@ namespace GrdRevit.Revit
             return el.Id?.ToString() ?? string.Empty;
         }
 
-        private static void AddParam(List<ElementParamValue> list, HashSet<string> seen, Parameter p, bool isInstance, Document doc)
+        private static void AddParam(Dictionary<string, ElementParamValue> agg, HashSet<string> seen, Parameter p, bool isInstance, Document doc, bool verbose)
         {
             if (p?.Definition?.Name == null) return;
-            if (!isInstance && !seen.Add(p.Definition.Name)) return;
+
+            // Не дублируем один и тот же параметр в пределах ОДНОГО элемента:
+            // у «экземпляр» имя может идти и как «тип» — ключи разных пространств.
+            if (isInstance)
+            {
+                var key = p.Definition.Name + "\u0001" + "I";
+                if (!seen.Add(key)) return;
+            }
+            else
+            {
+                if (!seen.Add(p.Definition.Name)) return;
+            }
 
             var row = new ElementParamValue
             {
@@ -259,18 +335,27 @@ namespace GrdRevit.Revit
                 StorageType = DescribeStorage(p),
                 Group = FriendlyGroup(p),
                 IsReadOnly = IsReadOnlyParam(p),
-                Value = ReadValue(p)
+                Value = ReadValue(p),
+                MatchCount = 1
             };
 
-            if (isInstance)
+            var aggKey = p.Definition.Name + "\u0001" + (isInstance ? "I" : "T");
+            if (agg.TryGetValue(aggKey, out var existing))
             {
-                // Одно имя может встречаться и как параметр экземпляра, и как тип —
-                // показываем обе строки, но каждую уникальную пару один раз.
-                var key = p.Definition.Name + "\u0001" + (isInstance ? "I" : "T");
-                if (!seen.Add(key)) return;
+                existing.MatchCount++;
+                if (IsReadOnlyParam(p)) existing.IsReadOnly = true;
+                if (!existing.Diverse && !string.Equals(existing.Value, row.Value, StringComparison.Ordinal))
+                {
+                    existing.Diverse = true;
+                    existing.Value = string.Empty;
+                }
+            }
+            else
+            {
+                agg[aggKey] = row;
             }
 
-            list.Add(row);
+            if (!verbose) return;
 
             try
             {
@@ -425,7 +510,7 @@ namespace GrdRevit.Revit
             try { return p.AsValueString() ?? string.Empty; } catch { return string.Empty; }
         }
 
-        private static InstanceParamsResult Apply(UIApplication app, ElementId elementId, List<InstanceParamEdit> edits)
+        private static InstanceParamsResult Apply(UIApplication app, List<ElementId> elementIds, List<InstanceParamEdit> edits)
         {
             var res = new InstanceParamsResult { Total = edits?.Count ?? 0 };
             var doc = app?.ActiveUIDocument?.Document;
@@ -435,25 +520,24 @@ namespace GrdRevit.Revit
                 return res;
             }
 
-            Element el = null;
-            try { el = doc.GetElement(elementId); } catch { }
-            if (el == null)
+            var elements = new List<Element>();
+            if (elementIds != null)
             {
-                res.Errors.Add("Выбранный элемент не найден в документе.");
+                foreach (var id in elementIds)
+                {
+                    Element el = null;
+                    try { el = doc.GetElement(id); } catch { }
+                    if (el != null) elements.Add(el);
+                }
+            }
+            if (elements.Count == 0)
+            {
+                res.Errors.Add("Выбранные элементы не найдены в документе.");
                 return res;
             }
 
             if (edits == null || edits.Count == 0) return res;
-
-            try
-            {
-                GrdLog.Log("InstanceParams.Apply: doc path=\"" + doc.PathName + "\" isWorkshared=" +
-                           doc.IsWorkshared + " isReadOnly=" + doc.IsReadOnly +
-                           " el.IsValidObject=" + el.IsValidObject +
-                           " el.OwnerViewId=" + el.OwnerViewId +
-                           " el.Category.Name=\"" + el.Category?.Name + "\"");
-            }
-            catch { }
+            GrdLog.Log("InstanceParams.Apply: элементов=" + elements.Count);
 
             using (var t = new Transaction(doc, "JTOOLS: изменить параметры экземпляра"))
             {
@@ -463,91 +547,52 @@ namespace GrdRevit.Revit
 
                     foreach (var edit in edits)
                     {
-                        try
+                        int fails = 0;
+                        int writes = 0;
+                        var reasons = new List<string>();
+                        foreach (var el in elements)
                         {
-                            var symbol = (el as FamilyInstance)?.Symbol;
-                            Element target = edit.IsInstance ? el : symbol;
-
-                            if (target == null)
+                            try
                             {
-                                res.Errors.Add("«" + edit.Name + "»: элемент не является экземпляром семейства");
-                                continue;
-                            }
-
-                            Parameter p = null;
-                            try { p = target.LookupParameter(edit.Name); } catch { }
-
-                            GrdLog.Log("InstanceParams.Apply: редактируем «" + edit.Name +
-                                       "» isInstance=" + edit.IsInstance +
-                                       " target=" + (target == el ? "element" : "symbol") +
-                                       " p=" + (p != null ? p.StorageType.ToString() + (IsReadOnlyParam(p) ? " RO" : " RW") : "не найден") +
-                                       " запрошенное значение=\"" + edit.NewValue + "\"");
-
-                            // Имя приходит из строки таблицы, а строка могла быть размечена как
-                            // «экземпляр/тип» не той привязки. Если параметр не найден или только
-                            // для чтения — пробуем другую привязку того же элемента (type↔instance).
-                            if (p == null || IsReadOnlyParam(p))
-                            {
-                                var alternate = edit.IsInstance ? symbol : el;
-                                if (alternate != null && alternate != target)
+                                var r = ApplyOne(el, edit);
+                                if (r.Ok)
                                 {
-                                    try
+                                    if (r.Written)
                                     {
-                                        var alt = alternate.LookupParameter(edit.Name);
-                                        if (alt != null && !IsReadOnlyParam(alt))
-                                        {
-                                            target = alternate;
-                                            p = alt;
-                                        }
+                                        writes++;
+                                        var key = edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\"";
+                                        if (!res.Changed.Contains(key)) res.Changed.Add(key);
                                     }
-                                    catch { }
+                                }
+                                else
+                                {
+                                    fails++;
+                                    reasons.Add(r.Element + (string.IsNullOrEmpty(r.Reason) ? string.Empty : " — " + r.Reason));
                                 }
                             }
-
-                            if (p == null)
+                            catch (Exception ex)
                             {
-                                res.Errors.Add("«" + edit.Name + "»: параметр не найден");
-                                GrdLog.Log("InstanceParams.Apply: не найден «" + edit.Name +
-                                           "» isInstance=" + edit.IsInstance);
-                                continue;
+                                GrdLog.Log("InstanceParamsHandler.Apply edit EXCEPTION: " + ex);
+                                fails++;
+                                reasons.Add(DescribeElement(el) + " — " + ex.Message);
                             }
-                            if (IsReadOnlyParam(p))
-                            {
-                                res.Errors.Add("«" + edit.Name + "»: параметр доступен только для чтения");
-                                GrdLog.Log("InstanceParams.Apply: только чтение «" + edit.Name + "»");
-                                continue;
-                            }
-                            if (p.StorageType == StorageType.ElementId)
-                            {
-                                res.Errors.Add("«" + edit.Name + "»: значение ссылки не редактируется");
-                                continue;
-                            }
-
-                            var current = ReadValue(p);
-                            if (string.Equals(current, edit.NewValue ?? string.Empty, StringComparison.Ordinal))
-                            {
-                                GrdLog.Log("InstanceParams.Apply: «" + edit.Name +
-                                           "» без изменений (current=\"" + current + "\")");
-                                continue; // значение не изменилось
-                            }
-
-                            if (!TryWrite(p, edit.NewValue ?? string.Empty))
-                            {
-                                res.Errors.Add("«" + edit.Name + "»: не удалось записать значение \"" + edit.NewValue + "\"");
-                                GrdLog.Log("InstanceParams.Apply: не удалось записать «" + edit.Name +
-                                           "» value=\"" + edit.NewValue + "\" current=\"" + current + "\"");
-                                continue;
-                            }
-
-                            res.Applied++;
-                            GrdLog.Log("InstanceParams.Apply: «" + edit.Name + "» ок target=" + target.GetType().Name +
-                                       " value=\"" + edit.NewValue + "\" (было \"" + current + "\")");
-                            res.Changed.Add(edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\"");
                         }
-                        catch (Exception ex)
+
+                        if (fails == 0)
                         {
-                            GrdLog.Log("InstanceParamsHandler.Apply edit EXCEPTION: " + ex);
-                            res.Errors.Add("«" + edit.Name + "»: " + ex.Message);
+                            res.Applied++;
+                            GrdLog.Log("InstanceParams.Apply: «" + edit.Name + "» ок у " + elements.Count +
+                                       (writes > 0 ? ", записей=" + writes : ", без изменений") +
+                                       " value=\"" + edit.NewValue + "\"");
+                        }
+                        else
+                        {
+                            res.Errors.Add("«" + edit.Name + "»: не применено у " + fails + " из " +
+                                           elements.Count + " экземпляров (" +
+                                           string.Join("; ", reasons.Take(3)) + (reasons.Count > 3 ? "; и др." : "") + ")");
+                            GrdLog.Log("InstanceParams.Apply: «" + edit.Name +
+                                       "» не применено у " + fails + " из " + elements.Count +
+                                       " reasons=" + string.Join(" | ", reasons));
                         }
                     }
 
@@ -564,31 +609,141 @@ namespace GrdRevit.Revit
             // Контроль после коммита: читаем фактическое состояние параметров.
             foreach (var edit in edits)
             {
-                try
+                var key = edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\"";
+                if (!res.Changed.Contains(key)) continue;
+                foreach (var el in elements)
                 {
-                    var target = edit.IsInstance
-                        ? doc.GetElement(elementId)
-                        : (doc.GetElement(elementId) as FamilyInstance)?.Symbol;
-                    var verb = target?.LookupParameter(edit.Name);
-                    var actual = verb != null ? ReadValue(verb) : string.Empty;
-                    GrdLog.Log("InstanceParamsHandler.Apply verify: «" + edit.Name + "» isInstance=" +
-                               edit.IsInstance + " found=" + (verb != null) +
-                               " RO=" + (verb != null && IsReadOnlyParam(verb)) +
-                               " value=\"" + actual +
-                               "\" (запрошено \"" + edit.NewValue + "\")");
-                    if (verb != null && actual != (edit.NewValue ?? string.Empty) &&
-                        res.Changed.Contains(edit.Name + (edit.IsInstance ? " (экз.)" : " (тип)") + " = \"" + edit.NewValue + "\""))
+                    try
                     {
-                        res.Errors.Add("«" + edit.Name + "»: Revit не сохранил значение \"" + edit.NewValue +
-                                       "\" (осталось \"" + actual + "\") — параметр пересчитывается семейством.");
+                        var target = edit.IsInstance ? el : (el as FamilyInstance)?.Symbol;
+                        var verb = target?.LookupParameter(edit.Name);
+                        var actual = verb != null ? ReadValue(verb) : string.Empty;
+                        GrdLog.Log("InstanceParamsHandler.Apply verify: «" + edit.Name + "» isInstance=" +
+                                   edit.IsInstance + " el=\"" + DescribeElement(el) + "\" found=" + (verb != null) +
+                                   " RO=" + (verb != null && IsReadOnlyParam(verb)) +
+                                   " value=\"" + actual +
+                                   "\" (запрошено \"" + edit.NewValue + "\")");
+                        if (verb != null && actual != (edit.NewValue ?? string.Empty))
+                        {
+                            res.Errors.Add("«" + edit.Name + "» у «" + DescribeElement(el) + "»: Revit не сохранил значение \"" +
+                                           edit.NewValue + "\" (осталось \"" + actual + "\") — параметр пересчитывается семейством.");
+                        }
                     }
+                    catch { }
                 }
-                catch { }
             }
 
             GrdLog.Log("InstanceParamsHandler: применено " + res.Applied + " из " + res.Total +
                        ", ошибок=" + res.Errors.Count);
             return res;
+        }
+
+        /// <summary>Результат записи одного значения параметра в один элемент.</summary>
+        private sealed class ApplyOneResult
+        {
+            public bool Ok;
+            public bool Written;
+            public string Reason = string.Empty;
+            public string Element = string.Empty;
+        }
+
+        private static ApplyOneResult ApplyOne(Element el, InstanceParamEdit edit)
+        {
+            try
+            {
+                var resRec = new ApplyOneResult { Element = DescribeElement(el) };
+                if (!(el is FamilyInstance))
+                {
+                    resRec.Ok = false;
+                    resRec.Reason = "элемент не является экземпляром семейства";
+                    return resRec;
+                }
+
+                Element target;
+                Parameter p = FindWritableParam(el, edit.Name, edit.IsInstance, out target);
+
+                if (target == null || p == null)
+                {
+                    resRec.Ok = false;
+                    resRec.Reason = "параметр не найден";
+                    GrdLog.Log("InstanceParams.Apply: не найден «" + edit.Name + "» isInstance=" + edit.IsInstance +
+                               " el=\"" + DescribeElement(el) + "\"");
+                    return resRec;
+                }
+                if (IsReadOnlyParam(p))
+                {
+                    resRec.Ok = false;
+                    resRec.Reason = "параметр доступен только для чтения";
+                    GrdLog.Log("InstanceParams.Apply: только чтение «" + edit.Name + "» el=\"" + DescribeElement(el) + "\"");
+                    return resRec;
+                }
+                if (p.StorageType == StorageType.ElementId)
+                {
+                    resRec.Ok = false;
+                    resRec.Reason = "значение ссылки не редактируется";
+                    return resRec;
+                }
+
+                var current = ReadValue(p);
+                if (string.Equals(current, edit.NewValue ?? string.Empty, StringComparison.Ordinal))
+                {
+                    GrdLog.Log("InstanceParams.Apply: «" + edit.Name + "» el=\"" + DescribeElement(el) +
+                               "\" без изменений (current=\"" + current + "\")");
+                    resRec.Ok = true;
+                    resRec.Written = false;
+                    return resRec;
+                }
+
+                if (!TryWrite(p, edit.NewValue ?? string.Empty))
+                {
+                    resRec.Ok = false;
+                    resRec.Reason = "не удалось записать значение \"" + edit.NewValue + "\"";
+                    GrdLog.Log("InstanceParams.Apply: не удалось записать «" + edit.Name +
+                               "» el=\"" + DescribeElement(el) + "\" value=\"" + edit.NewValue + "\" current=\"" + current + "\"");
+                    return resRec;
+                }
+
+                resRec.Ok = true;
+                resRec.Written = true;
+                GrdLog.Log("InstanceParams.Apply: «" + edit.Name + "» ок el=\"" + DescribeElement(el) + "\" target=" +
+                           target.GetType().Name + " value=\"" + edit.NewValue + "\" (было \"" + current + "\")");
+                return resRec;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("InstanceParamsHandler.ApplyOne EXCEPTION: " + ex);
+                return new ApplyOneResult { Ok = false, Element = DescribeElement(el), Reason = ex.Message };
+            }
+        }
+
+        /// <summary>Находит параметр с нужной привязкой (экземпляр/тип) у элемента.
+        /// Если параметр не найден или только для чтения — пробует другую привязку
+        /// того же элемента (тип↔экземпляр): строка таблицы могла быть размечена
+        /// не той привязкой.</summary>
+        private static Parameter FindWritableParam(Element el, string name, bool isInstance, out Element target)
+        {
+            target = isInstance ? el : (el as FamilyInstance)?.Symbol;
+            Parameter p = null;
+            try { p = target?.LookupParameter(name); } catch { }
+
+            if (p == null || IsReadOnlyParam(p))
+            {
+                var alternate = isInstance ? (el as FamilyInstance)?.Symbol : el;
+                if (alternate != null && alternate != target)
+                {
+                    try
+                    {
+                        var alt = alternate.LookupParameter(name);
+                        if (alt != null && !IsReadOnlyParam(alt))
+                        {
+                            target = alternate;
+                            p = alt;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            return p;
         }
 
         /// <summary>

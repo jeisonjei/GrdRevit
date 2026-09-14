@@ -16,7 +16,7 @@
     <DockPanel Margin="10">
         <GroupBox DockPanel.Dock="Bottom" Header="Применение изменить" Margin="0,8,0,0" Padding="6">
             <StackPanel>
-                <TextBlock Text="Параметры «экземпляр» изменяют только выбранный элемент. Параметры «тип» (жёлтые строки) изменяются у ТИПА — они применятся ко ВСЕМ экземплярам этого типа в проекте."
+                <TextBlock Text="Параметры «экземпляр» изменяют только выбранные элементы. Параметры «тип» (жёлтые строки) изменяются у ТИПА — они применятся ко ВСЕМ экземплярам этих типов в проекте. Можно выбрать несколько экземпляров разных типов: значение, введённое в ячейке, применяется к этому параметру ВСЕХ выбранных элементов."
                            TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Применить изменения" Click="OnApply"
@@ -103,8 +103,9 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Value}" TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" Margin="6,0" ToolTip="{Binding Value}">
+                                    <TextBlock Text="{Binding DisplayValue}" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" Margin="6,0"
+                                               ToolTip="{Binding DisplayValue}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
@@ -112,6 +113,10 @@
                                                     <DataTrigger Binding="{Binding IsEditable}" Value="False">
                                                         <Setter Property="Foreground" Value="#A5ADB8"/>
                                                         <Setter Property="TextDecorations" Value="Strikethrough"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsDiverse}" Value="True">
+                                                        <Setter Property="Foreground" Value="#8A93A0"/>
+                                                        <Setter Property="FontStyle" Value="Italic"/>
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>

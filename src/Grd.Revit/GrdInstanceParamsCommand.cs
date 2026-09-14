@@ -36,29 +36,38 @@ namespace GrdRevit
                 }
 
                 var selected = uidoc.Selection.GetElementIds();
-                if (selected.Count != 1)
+                if (selected.Count == 0)
                 {
                     TaskDialog.Show("JTOOLS: параметры экземпляра",
-                        "Выделите ровно один экземпляр семейства в проекте и повторите команду.");
+                        "Выделите один или несколько экземпляров семейств в проекте и повторите команду.\n\n" +
+                        "Можно выделить несколько экземпляров РАЗНЫХ типов — значения параметров будут " +
+                        "применяться ко всем выбранным элементам.");
                     return Result.Cancelled;
                 }
 
-                var el = doc.GetElement(selected.First());
-                if (el == null)
+                var selectedElements = new System.Collections.Generic.List<Autodesk.Revit.DB.Element>();
+                foreach (var id in selected)
                 {
-                    TaskDialog.Show("JTOOLS: параметры экземпляра", "Выбранный элемент не найден.");
-                    return Result.Cancelled;
+                    var el = doc.GetElement(id);
+                    if (el == null)
+                    {
+                        TaskDialog.Show("JTOOLS: параметры экземпляра", "Один из выбранных элементов не найден в документе.");
+                        return Result.Cancelled;
+                    }
+                    selectedElements.Add(el);
                 }
-                if (!(el is Autodesk.Revit.DB.FamilyInstance))
+                if (selectedElements.Any(e => !(e is Autodesk.Revit.DB.FamilyInstance)))
                 {
                     TaskDialog.Show("JTOOLS: параметры экземпляра",
-                        "Выбранный элемент не является экземпляром семейства. Команда работает с экземплярами семейств.");
+                        "Все выбранные элементы должны быть экземплярами семейств. Команда работает с экземплярами семейств.");
                     return Result.Cancelled;
                 }
+
+                var elementIds = selectedElements.Select(e => e.Id).ToList();
 
                 if (_window == null || !_window.IsVisible)
                 {
-                    var window = new InstanceParamsWindow(el.Id);
+                    var window = new InstanceParamsWindow(elementIds);
                     window.Closed += (s, e) => _window = null;
 
                     try
@@ -78,8 +87,9 @@ namespace GrdRevit
                 }
                 else
                 {
-                    _window.Activate();
-                    GrdLog.Log("IP1b: окно активировано");
+                    _window.SetSelection(elementIds);
+                    GrdLog.Log("IP1b: окно активировано, выборка обновлена (id=" +
+                               string.Join(",", elementIds.Select(x => x.Value)) + ")");
                 }
 
                 GrdLog.Log("IP2: succeeded in " + sw.ElapsedMilliseconds + " ms");

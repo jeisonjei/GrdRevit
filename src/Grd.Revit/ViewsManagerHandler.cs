@@ -12,8 +12,9 @@ namespace GrdRevit.Revit
         public long Id;
         public string Name = string.Empty;
         public string KindText = string.Empty;
-        public string KindKey = string.Empty; // "section" | "plan" | "3d"
+        public string KindKey = string.Empty; // "section" | "plan" | "3d" | "sheet"
         public string Scale = string.Empty;
+        public string SheetNumber = string.Empty;
         public bool IsTemplate;
     }
 
@@ -62,7 +63,7 @@ namespace GrdRevit.Revit
         private readonly object _sync = new object();
         private readonly Queue<Request> _requests = new Queue<Request>();
 
-        private enum Kind { Read, Duplicate, Rename, Open, ReadTemplates, ApplyTemplate, AddPrefix }
+        private enum Kind { Read, Duplicate, Rename, Open, ReadTemplates, ApplyTemplate, AddPrefix, SetSheetNumber }
 
         private sealed class Request
         {
@@ -104,6 +105,15 @@ namespace GrdRevit.Revit
             lock (_sync)
             {
                 _requests.Enqueue(new Request { Kind = Kind.Open, Id = id, OpCallback = callback });
+            }
+        }
+
+        /// <summary>Изменить номер листа (только для видов-листов).</summary>
+        public void QueueSetSheetNumber(long id, string number, Action<ViewOpResult> callback)
+        {
+            lock (_sync)
+            {
+                _requests.Enqueue(new Request { Kind = Kind.SetSheetNumber, Id = id, Name = number ?? string.Empty, OpCallback = callback });
             }
         }
 
@@ -182,6 +192,9 @@ namespace GrdRevit.Revit
                         case Kind.Open:
                             req.OpCallback?.Invoke(Open(app, req.Id));
                             break;
+                        case Kind.SetSheetNumber:
+                            req.OpCallback?.Invoke(SetSheetNumber(app, req.Id, req.Name));
+                            break;
                         case Kind.AddPrefix:
                             req.BatchCallback?.Invoke(AddPrefix(app, req.Ids, req.Name));
                             break;
@@ -242,11 +255,14 @@ namespace GrdRevit.Revit
                         KindKey = KindKeyOf(v.ViewType)
                     };
                     item.KindText = KindTextOf(v.ViewType);
+                    if (v is ViewSheet vs)
+                    {
+                        try { item.SheetNumber = vs.SheetNumber; } catch { }
+                    }
                     if (item.KindKey == null)
                     {
-                        // Показываем только значимые категории (план/разрез/3D и близкие).
-                        if (v.ViewType == ViewType.DraftingView || v.ViewType == ViewType.Schedule ||
-                            v.ViewType == ViewType.Legend) continue;
+                        // Показываем только значимые категории (план/разрез/3D, спецификации и близкие).
+                        if (v.ViewType == ViewType.DraftingView || v.ViewType == ViewType.Legend) continue;
                         item.KindKey = "other";
                     }
                     try
@@ -285,6 +301,8 @@ namespace GrdRevit.Revit
                     return "3d";
                 case ViewType.DrawingSheet:
                     return "sheet";
+                case ViewType.Schedule:
+                    return "schedule";
                 default:
                     return null;
             }
@@ -302,6 +320,7 @@ namespace GrdRevit.Revit
                 case ViewType.EngineeringPlan: return "План инж. систем";
                 case ViewType.ThreeD: return "3D";
                 case ViewType.DrawingSheet: return "Лист";
+                case ViewType.Schedule: return "Спецификация";
                 default: return t.ToString();
             }
         }
@@ -493,6 +512,39 @@ namespace GrdRevit.Revit
                 Ok = true,
                 Message = (link ? "Связан с шаблоном: " : "Применён шаблон: ") + template.Name
             };
+        }
+
+        private static ViewOpResult SetSheetNumber(UIApplication app, long id, string number)
+        {
+            var doc = app?.ActiveUIDocument?.Document;
+            var vs = doc != null ? doc.GetElement(new ElementId(id)) as ViewSheet : null;
+            if (vs == null) return Err("Лист не найден или документ неактивен.");
+            number = (number ?? string.Empty).Trim();
+            if (number.Length == 0) return Err("Номер листа не может быть пустым.");
+            if (string.Equals(vs.SheetNumber, number, StringComparison.Ordinal))
+                return new ViewOpResult { Ok = true, Message = "Номер не изменился." };
+
+            using (var t = new Transaction(doc, "JTOOLS: изменить номер листа"))
+            {
+                try { t.Start(); } catch (Exception ex) { return Err("Не удалось начать транзакцию: " + ex.Message); }
+                try
+                {
+                    vs.SheetNumber = number;
+                }
+                catch (Exception ex)
+                {
+                    try { t.RollBack(); } catch { }
+                    return Err("Не удалось изменить номер листа: " + ex.Message);
+                }
+                try { t.Commit(); }
+                catch (Exception ex)
+                {
+                    try { t.RollBack(); } catch { }
+                    return Err("Ошибка сохранения номера листа: " + ex.Message);
+                }
+            }
+            GrdLog.Log("ViewsManager: номер листа «" + vs.Name + "» = " + number);
+            return new ViewOpResult { Ok = true, Message = "Номер листа обновлён: " + number };
         }
 
         private static BatchOpResult AddPrefix(UIApplication app, List<long> ids, string prefix)

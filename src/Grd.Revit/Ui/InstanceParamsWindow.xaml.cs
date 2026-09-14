@@ -12,7 +12,7 @@ using GrdRevit.Revit;
 
 namespace GrdRevit.Ui
 {
-    /// <summary>Строка параметра выбранного экземпляра в таблице окна.</summary>
+    /// <summary>Строка параметра выбранных экземпляров в таблице окна.</summary>
     public class ElementParamRow : ObservableObject
     {
         public string Name { get; }
@@ -23,6 +23,9 @@ namespace GrdRevit.Ui
         public bool IsReadOnly { get; }
         public bool IsEditable => !IsReadOnly;
         public string OriginalValue { get; }
+        public bool IsDiverse { get; }
+        public int MatchCount { get; }
+        private readonly bool _allowClearFormula;
 
         private string _value;
         public string Value
@@ -31,7 +34,11 @@ namespace GrdRevit.Ui
             set => Set(ref _value, value);
         }
 
-        public ElementParamRow(ElementParamValue p)
+        /// <summary>Отображение в ячейке: для строк с разными значениями у разных типов
+        /// показывается маркер, а не первое попавшееся число.</summary>
+        public string DisplayValue => IsDiverse ? "⟨несколько значений⟩" : Value;
+
+        public ElementParamRow(ElementParamValue p, bool allowClearFormula)
         {
             Name = p?.Name ?? string.Empty;
             Group = string.IsNullOrEmpty(p?.Group) ? "—" : p.Group;
@@ -39,31 +46,41 @@ namespace GrdRevit.Ui
             IsInstance = p?.IsInstance ?? true;
             BindingText = IsInstance ? "экземпляр" : "тип";
             IsReadOnly = p?.IsReadOnly ?? true;
+            IsDiverse = p?.Diverse ?? false;
+            MatchCount = p?.MatchCount ?? 1;
             OriginalValue = p?.Value ?? string.Empty;
             _value = OriginalValue;
+            _allowClearFormula = allowClearFormula;
         }
 
-        public bool Changed => !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
+        /// <summary>Строка изменена, если пользователь ввёл другое значение. Для строк с
+        /// «несколькими значениями» (IsDiverse) изменение — только явный ввод текста;
+        /// пустая ячейка оставляется как есть (без перезаписи всех типов пустым значением).</summary>
+        public bool Changed => IsDiverse
+            ? Value.Length > 0
+            : !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
 
-        /// <summary>Кнопка «снять формулу»: у любого параметра только для чтения.
+        /// <summary>Кнопка «снять формулу»: у любого параметра только для чтения и только
+        /// при выборе ОДНОГО элемента (при нескольких — формулу снимать неоднозначно).
         /// Формула в семействе всегда на параметре ТИПА, но значение в проекте может
-        /// блокироваться и у строки «экземпляр» (формульный тип-параметр с тем же
-        /// именем показывается в списке элемента как «только чтение»).</summary>
-        public bool ShowClearFormula => !IsEditable;
+        /// блокироваться и у строки «экземпляр».</summary>
+        public bool ShowClearFormula => !IsEditable && _allowClearFormula;
     }
 
-    /// <summary>Моделесс-окно: редактирование значений всех параметров выбранного
-    /// экземпляра семейства без открытия редактора семейства.</summary>
+    /// <summary>Моделесс-окно: редактирование значений всех параметров выбранных
+    /// экземпляров семейств без открытия редактора семейства. Можно выбрать несколько
+    /// экземпляров разных типов — значения применяются к параметрам всех выбранных
+    /// элементов по имени параметра.</summary>
     public partial class InstanceParamsWindow : Window
     {
         public ObservableCollection<ElementParamRow> Rows { get; } = new ObservableCollection<ElementParamRow>();
 
-        private readonly ElementId _elementId;
+        private readonly List<ElementId> _elementIds = new List<ElementId>();
         private bool _busy;
 
-        public InstanceParamsWindow(ElementId elementId)
+        public InstanceParamsWindow(List<ElementId> elementIds)
         {
-            _elementId = elementId;
+            _elementIds.AddRange(elementIds ?? new List<ElementId>());
             InitializeComponent();
             DataContext = this;
             Loaded += (s, e) =>
@@ -76,6 +93,15 @@ namespace GrdRevit.Ui
                 }), System.Windows.Threading.DispatcherPriority.Input);
                 LoadParams();
             };
+        }
+
+        /// <summary>Новая выборка в Revit при уже открытом окне: перечитать параметры.</summary>
+        public void SetSelection(IList<ElementId> elementIds)
+        {
+            _elementIds.Clear();
+            if (elementIds != null) _elementIds.AddRange(elementIds);
+            LoadParams();
+            try { Activate(); } catch { }
         }
 
         /// <summary>F2, двойной щелчок или клик по ячейке «Значение»: выделить весь текст.
@@ -145,7 +171,8 @@ namespace GrdRevit.Ui
             StatusText.Text = "Снятие формулы: «" + row.Name + "»…";
             try
             {
-                handler.QueueClearFormula(_elementId, row.Name, row.IsInstance, result =>
+                var singleId = _elementIds.Count > 0 ? _elementIds[0] : ElementId.InvalidElementId;
+                handler.QueueClearFormula(singleId, row.Name, row.IsInstance, result =>
                 {
                     try
                     {
@@ -195,7 +222,7 @@ namespace GrdRevit.Ui
             StatusText.Text = "Загрузка…";
             try
             {
-                handler.QueueRead(_elementId, result =>
+                handler.QueueRead(_elementIds, result =>
                 {
                     try
                     {
@@ -207,11 +234,16 @@ namespace GrdRevit.Ui
                             return;
                         }
 
+                        bool allowClearFormula = result.Elements.Count == 1;
                         foreach (var p in result.Params)
-                            Rows.Add(new ElementParamRow(p));
+                            Rows.Add(new ElementParamRow(p, allowClearFormula));
 
-                        ElementInfo.Text = result.ElementName +
-                            (result.IsFamilyInstance ? string.Empty : " (не экземпляр семейства)");
+                        ElementInfo.Text = result.ElementName;
+                        int total = Math.Max(1, result.Elements.Count);
+                        int incomplete = Rows.Count(r => r.MatchCount < total);
+                        if (incomplete > 0)
+                            ElementInfo.Text += Environment.NewLine + incomplete + " параметров есть не у всех выбранных видов/типов — они применяются только к тем экземплярам, у которых такой параметр есть.";
+
                         int editable = Rows.Count(r => r.IsEditable);
                         int instance = Rows.Count(r => r.IsInstance);
                         CountText.Text = "параметров: " + Rows.Count +
@@ -331,7 +363,7 @@ namespace GrdRevit.Ui
             {
                 var answer = MessageBox.Show(
                     "Среди изменений есть параметры ТИПА. Они применяются ко ВСЕМ экземплярам " +
-                    "данного типа в проекте, а не только к выбранному.\n\nПродолжить?",
+                    "соответствующих типов в проекте, а не только к выбранным элементам.\n\nПродолжить?",
                     "Параметры экземпляра", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
                 if (answer != MessageBoxResult.OK) return;
             }
@@ -340,7 +372,7 @@ namespace GrdRevit.Ui
             StatusText.Text = "Применение…";
             try
             {
-                handler.QueueApply(_elementId, edits, result =>
+                handler.QueueApply(_elementIds, edits, result =>
                 {
                     try
                     {
