@@ -17,6 +17,7 @@ namespace GrdRevit
         private const string FamilyParamsButtonName = "GrdRevit.FamilyParams";
         private const string Box3DButtonName = "GrdRevit.Box3D";
         private const string InstanceParamsButtonName = "GrdRevit.InstanceParams";
+        private const string ScheduleExportButtonName = "GrdRevit.ScheduleExport";
         private const string SettingsButtonName = "GrdRevit.Settings";
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
 
@@ -61,8 +62,8 @@ namespace GrdRevit
                                       "Операция «Изменить привязку» переключает существующий параметр между экземпляром и типом. " +
                                       "Файл общих параметров запоминается и восстанавливается при следующем запуске."
                 };
-                familyData.Image = LoadIcon("GrdRevit.Resources.params16.png");
-                familyData.LargeImage = LoadIcon("GrdRevit.Resources.params32.png");
+                familyData.Image = LoadIcon("GrdRevit.Resources.familyparams16.png");
+                familyData.LargeImage = LoadIcon("GrdRevit.Resources.familyparams32.png");
                 familyData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(familyData);
@@ -121,6 +122,23 @@ namespace GrdRevit
                 viewsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(viewsData);
+
+                var scheduleData = new PushButtonData(
+                    ScheduleExportButtonName,
+                    "Экспорт\nспецификации",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdScheduleExportCommand).FullName)
+                {
+                    ToolTip = "Выгрузить текущую спецификацию в файл LibreOffice Calc (.ods) и открыть папку с файлом",
+                    LongDescription = "Открывает спецификацию (вид таблицы) и нажимает кнопку — плагин сохраняет её содержимое в формат " +
+                                      "LibreOffice Calc (.ods). Последние папка и имя файла запоминаются и подставляются в " +
+                                      "следующий раз. После сохранения открывается Проводник с выделенным файлом (сам файл не открывается)."
+                };
+                scheduleData.Image = LoadIcon("GrdRevit.Resources.schedule16.png");
+                scheduleData.LargeImage = LoadIcon("GrdRevit.Resources.schedule32.png");
+                scheduleData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(scheduleData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,

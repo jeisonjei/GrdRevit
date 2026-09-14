@@ -44,8 +44,14 @@ namespace GrdRevit.Core
         /// <summary>Путь к последнему загруженному файлу общих параметров Revit (.txt).</summary>
         public string LastSharedParamsPath { get; set; } = string.Empty;
 
-        /// <summary>Определения общих параметров из последнего загруженного файла (для восстановления при запуске).</summary>
+        /// <summary>Полный путь к последнему загруженному файлу (для восстановления при запуске).</summary>
         public List<SharedParamDef> SharedParamDefs { get; set; } = new List<SharedParamDef>();
+
+        /// <summary>Папка последнего экспорта спецификации в Calc (для SaveFileDialog по умолчанию).</summary>
+        public string ScheduleExportDir { get; set; } = string.Empty;
+
+        /// <summary>Имя файла последнего экспорта спецификации в Calc.</summary>
+        public string ScheduleExportName { get; set; } = string.Empty;
 
         public static GrdSettings Load(string path)
         {

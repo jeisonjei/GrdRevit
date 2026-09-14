@@ -44,6 +44,10 @@
     <EmbeddedResource Include="Resources\views32.png" />
     <EmbeddedResource Include="Resources\settings16.png" />
     <EmbeddedResource Include="Resources\settings32.png" />
+    <EmbeddedResource Include="Resources\familyparams16.png" />
+    <EmbeddedResource Include="Resources\familyparams32.png" />
+    <EmbeddedResource Include="Resources\schedule16.png" />
+    <EmbeddedResource Include="Resources\schedule32.png" />
   </ItemGroup>
 
   <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->

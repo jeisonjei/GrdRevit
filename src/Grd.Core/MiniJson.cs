@@ -38,6 +38,10 @@ namespace GrdRevit.Core
             WriteProp(sb, "LastSharedParamsPath", Quote(Encode(s.LastSharedParamsPath)));
             sb.Append(',');
             WriteProp(sb, "SharedParamDefs", WriteSharedDefs(s.SharedParamDefs));
+            sb.Append(',');
+            WriteProp(sb, "ScheduleExportDir", Quote(Encode(s.ScheduleExportDir)));
+            sb.Append(',');
+            WriteProp(sb, "ScheduleExportName", Quote(Encode(s.ScheduleExportName)));
             sb.Append('}');
             return sb.ToString();
         }
@@ -165,6 +169,8 @@ namespace GrdRevit.Core
                     });
                 }
             }
+            if (m.TryGetValue("ScheduleExportDir", out var sed)) s.ScheduleExportDir = sed as string ?? string.Empty;
+            if (m.TryGetValue("ScheduleExportName", out var sen)) s.ScheduleExportName = sen as string ?? string.Empty;
             return s;
         }
 
