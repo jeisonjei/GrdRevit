@@ -147,6 +147,10 @@
                             <TextBlock x:Name="FamiliesCount" VerticalAlignment="Center" Margin="10,0,0,0"
                                        Foreground="{StaticResource TextSecondaryBrush}"/>
                             <Button Content="Обновить" Click="OnRefresh" Margin="10,0,0,0" Padding="10,2"/>
+                            <CheckBox x:Name="SelectedModeBox" Content="Только выбранные в Revit"
+                                      Margin="12,0,0,0" VerticalAlignment="Center"
+                                      Checked="OnSelectedModeToggled" Unchecked="OnSelectedModeToggled"
+                                      ToolTip="Показывать и отмечать только семейства выделенных в Revit элементов. Снимите галочку, чтобы вернуться к списку всех семейств документа."/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                             <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"

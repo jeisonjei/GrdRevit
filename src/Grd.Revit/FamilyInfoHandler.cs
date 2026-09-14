@@ -54,16 +54,20 @@ namespace GrdRevit.Revit
         {
             public List<string> ReadParamsFor;
             public string SharedPath;
+            public bool SelectedOnly;
             public Action<FamilyInfoResult> Callback;
         }
 
         /// <summary>
         /// Очередь запроса. <paramref name="readParamsFor"/> — имена семейств, чьи параметры
         /// нужно прочитать (null — только список семейств и общих параметров файла).
+        /// <paramref name="selectedOnly"/> — показывать только семейства выделенных
+        /// в Revit элементов (иначе — все семейства документа).
         /// Запросы не перекрываются: каждый из них будет выполнен при очередном
         /// вызове <see cref="Execute"/>.
         /// </summary>
-        public void Queue(List<string> readParamsFor, string sharedPath, Action<FamilyInfoResult> callback)
+        public void Queue(List<string> readParamsFor, string sharedPath, Action<FamilyInfoResult> callback,
+            bool selectedOnly = false)
         {
             lock (_sync)
             {
@@ -71,6 +75,7 @@ namespace GrdRevit.Revit
                 {
                     ReadParamsFor = readParamsFor,
                     SharedPath = sharedPath ?? string.Empty,
+                    SelectedOnly = selectedOnly,
                     Callback = callback
                 });
             }
@@ -99,7 +104,7 @@ namespace GrdRevit.Revit
             {
                 try
                 {
-                    req.Callback(Read(app, req.SharedPath, req.ReadParamsFor));
+                    req.Callback(Read(app, req.SharedPath, req.ReadParamsFor, req.SelectedOnly));
                 }
                 catch (Exception ex)
                 {
@@ -110,7 +115,7 @@ namespace GrdRevit.Revit
             }
         }
 
-        private static FamilyInfoResult Read(UIApplication app, string requestedPath, List<string> readParamsFor)
+        private static FamilyInfoResult Read(UIApplication app, string requestedPath, List<string> readParamsFor, bool selectedOnly)
         {
             var res = new FamilyInfoResult();
             var uiDoc = app?.ActiveUIDocument;
@@ -123,14 +128,23 @@ namespace GrdRevit.Revit
 
             try
             {
-                var families = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                var docNames = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
                 {
                     if (e == null || string.IsNullOrEmpty(e.Name)) continue;
-                    families.Add(e.Name);
+                    docNames.Add(e.Name);
                 }
-                res.Families = families.Select(n => new FamilyInfoItem { Name = n }).ToList();
-                GrdLog.Log("FamilyInfoHandler: семейств=" + res.Families.Count);
+                if (selectedOnly)
+                {
+                    var selected = SelectedFamilyNames(uiDoc, docNames);
+                    res.Families = selected.Select(n => new FamilyInfoItem { Name = n }).ToList();
+                    GrdLog.Log("FamilyInfoHandler: из выделения семейств=" + res.Families.Count);
+                }
+                else
+                {
+                    res.Families = docNames.Select(n => new FamilyInfoItem { Name = n }).ToList();
+                    GrdLog.Log("FamilyInfoHandler: семейств=" + res.Families.Count);
+                }
             }
             catch (Exception ex)
             {
@@ -301,6 +315,35 @@ namespace GrdRevit.Revit
                 if (f != null && string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) return f;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Имена семейств выделенных в Revit элементов (экземпляров семейств или самих
+        /// семейств из обозревателя проекта), ограниченные теми, что есть в документе.
+        /// Если выделение пусто или не содержит семейств — пустой список.
+        /// </summary>
+        private static List<string> SelectedFamilyNames(UIDocument uiDoc, ISet<string> docNames)
+        {
+            var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (uiDoc == null) return result.ToList();
+            try
+            {
+                foreach (var id in uiDoc.Selection.GetElementIds())
+                {
+                    var el = uiDoc.Document.GetElement(id);
+                    if (el == null) continue;
+                    string name = null;
+                    if (el is FamilyInstance fi) name = fi.Symbol?.Family?.Name;
+                    else if (el is Family fam) name = fam.Name;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (docNames.Contains(name)) result.Add(name);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler: выделение EXCEPTION: " + ex);
+            }
+            return result.ToList();
         }
 
         /// <summary>Человекопонятное имя группы параметра по ForgeTypeId.</summary>

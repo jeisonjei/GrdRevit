@@ -117,6 +117,7 @@ namespace GrdRevit.Ui
         public string[] StorageOptions { get; } = { "Текст", "Число", "Целое", "Длина", "Площадь", "Объём" };
 
         private bool _busy;
+        private bool _selectedMode;
         private readonly DispatcherTimer _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
 
         public FamilyParamsWindow()
@@ -141,6 +142,29 @@ namespace GrdRevit.Ui
         private void OnFamilyCheckChanged(object sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(FamilyCheckRow.IsChecked)) DebounceSelection();
+        }
+
+        /// <summary>
+        /// Включение/выключение режима «Только выбранные в Revit»: список семейств
+        /// перестраивается из текущего выделения (галочка снята — обычный режим,
+        /// все семейства документа). Обновление может быть в разгаре, поэтому при
+        /// занятом обработчике ждём его завершения и повторяем.
+        /// </summary>
+        private void OnSelectedModeToggled(object sender, RoutedEventArgs e)
+        {
+            _selectedMode = SelectedModeBox.IsChecked == true;
+            GrdLog.Log("FamilyParamsWindow: режим «выбранные» = " + _selectedMode);
+            RefreshInfoOrLater();
+        }
+
+        private void RefreshInfoOrLater()
+        {
+            if (!_busy)
+            {
+                RefreshInfo();
+                return;
+            }
+            Dispatcher.BeginInvoke(new Action(RefreshInfoOrLater), DispatcherPriority.Background);
         }
 
         /// <summary>Обновляет список семейств и определения общих параметров из сохранённого файла.</summary>
@@ -173,6 +197,15 @@ namespace GrdRevit.Ui
                         FamiliesCount.Text = string.IsNullOrEmpty(result.Error)
                             ? "семейств: " + FamilyChecks.Count
                             : result.Error;
+                        if (_selectedMode)
+                        {
+                            // Режим «выбранные»: отмечаем все найденные семейства сразу,
+                            // чтобы область применения соответствовала выделению в Revit.
+                            foreach (var f in FamilyChecks) f.IsChecked = true;
+                            FamiliesCount.Text = FamilyChecks.Count > 0
+                                ? "из выделения в Revit: " + FamilyChecks.Count
+                                : "не выбрано ни одного семейства в активном виде";
+                        }
                         ApplyFamFilter();
 
                         SharedDefs.Clear();
