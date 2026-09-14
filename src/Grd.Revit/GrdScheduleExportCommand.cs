@@ -13,13 +13,17 @@ namespace GrdRevit
     /// <summary>
     /// «Экспорт спецификации в Calc»: выгружает текущую спецификацию (активный вид-таблица
     /// либо выбранная на листе рамка со спецификацией) в файл LibreOffice Calc (.ods).
-    /// Запоминает последние папку и имя файла, после сохранения открывает Проводник
-    /// с выделенным файлом (сам файл не открывается).
+    /// Содержимое берётся из штатного экспорта Revit (ViewSchedule.Export, как «Файл →
+    /// Экспорт → Спецификации → ... (CSV)»), поэтому выгружаются все колонки и строки ровно
+    /// так, как они отображаются в спецификации (включая группировки, итоги, пустые поля).
+    /// Запоминает последние папку и имя файла, после сохранения открывает Проводник.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
     public class GrdScheduleExportCommand : IExternalCommand
     {
+        private const char CsvDelimiter = ';';
+
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
             try
@@ -48,7 +52,7 @@ namespace GrdRevit
                     return Result.Cancelled;
                 }
 
-                var rows = ReadTable(doc, schedule);
+                var rows = ReadTable(schedule);
                 if (rows.Count == 0)
                 {
                     TaskDialog.Show("JTOOLS: экспорт спецификации",
@@ -129,52 +133,42 @@ namespace GrdRevit
             return null;
         }
 
-        /// <summary>Читает таблицу спецификации: шапка, тело, итоги, подвал — как показано в Revit.
-        /// Перед чтением документ пересчитывается, а секции таблицы принудительно обновляются:
-        /// иначе рассчитанные значения (формулы, итоги) могут вернуть пустые ячейки.</summary>
-        private static List<string[]> ReadTable(Document doc, ViewSchedule schedule)
+        /// <summary>Читает спецификацию штатным экспортом Revit в CSV (во временную папку)
+        /// и переводит содержимое в список строк. Так получаются все колонки и строки
+        /// ровно в том виде, как спецификация отображается в Revit (группировки, итоги,
+        /// пустые ячейки) — в отличие от прямого чтения таблицы, которое часть значений теряет.</summary>
+        private static List<string[]> ReadTable(ViewSchedule schedule)
         {
-            try { doc.Regenerate(); }
-            catch (Exception ex) { GrdLog.Log("GrdScheduleExportCommand: Regenerate EXCEPTION " + ex); }
-
-            var rows = new List<string[]>();
-            var td = schedule.GetTableData();
-            int maxCols = 0;
-            var sections = new List<(SectionType type, string[] line)>();
-
-            foreach (var st in new[] { SectionType.Header, SectionType.Body, SectionType.Summary, SectionType.Footer })
+            var tmpDir = Path.Combine(Path.GetTempPath(), "GrdRevitSchedule_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmpDir);
+            try
             {
-                var sd = td.GetSectionData(st);
-                if (sd == null) continue;
-                try { if (sd.HideSection) continue; } catch { }
-                try { sd.RefreshData(); }
-                catch (Exception ex) { GrdLog.Log("GrdScheduleExportCommand: RefreshData(" + st + ") EXCEPTION " + ex); }
-                int r = sd.NumberOfRows;
-                int c = sd.NumberOfColumns;
-                maxCols = Math.Max(maxCols, c);
-                for (int i = 0; i < r; i++)
+                var options = new ViewScheduleExportOptions
                 {
-                    var line = new string[c];
-                    for (int j = 0; j < c; j++)
-                    {
-                        try { line[j] = sd.GetCellText(i, j) ?? string.Empty; }
-                        catch (Exception ex)
-                        {
-                            line[j] = string.Empty;
-                            GrdLog.Log("GrdScheduleExportCommand: GetCellText(" + st + ", " + i + ", " + j + ") EXCEPTION " + ex.Message);
-                        }
-                    }
-                    sections.Add((st, line));
-                }
-            }
+                    FieldDelimiter = CsvDelimiter.ToString(),
+                    ColumnHeaders = ExportColumnHeaders.None,
+                    TextQualifier = ExportTextQualifier.DoubleQuote,
+                    Title = false,
+                    HeadersFootersBlanks = false
+                };
+                schedule.Export(tmpDir, "grd_schedule", options);
+                if (!Directory.Exists(tmpDir))
+                    throw new InvalidOperationException("Revit не смог выгрузить спецификацию во временный CSV.");
 
-            foreach (var (type, line) in sections)
-            {
-                var row = new string[maxCols];
-                for (int j = 0; j < line.Length; j++) row[j] = line[j];
-                rows.Add(row);
+                var files = Directory.GetFiles(tmpDir);
+                if (files.Length != 1)
+                    throw new InvalidOperationException(
+                        "Непредвиденный результат экспорта Revit (файлов: " + files.Length + ").");
+                var csv = files[0];
+                var rows = CsvReader.ParseFile(csv, CsvDelimiter);
+                GrdLog.Log("GrdScheduleExportCommand: штатный экспорт Revit -> " + csv + ", строк=" + rows.Count);
+                return rows;
             }
-            return rows;
+            finally
+            {
+                try { if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, true); }
+                catch (Exception ex) { GrdLog.Log("GrdScheduleExportCommand: clean temp EXCEPTION " + ex); }
+            }
         }
 
         /// <summary>Имя файла по умолчанию из имени спецификации (без расширения).</summary>
