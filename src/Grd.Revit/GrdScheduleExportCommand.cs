@@ -16,7 +16,7 @@ namespace GrdRevit
     /// Запоминает последние папку и имя файла, после сохранения открывает Проводник
     /// с выделенным файлом (сам файл не открывается).
     /// </summary>
-    [Transaction(TransactionMode.ReadOnly)]
+    [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
     public class GrdScheduleExportCommand : IExternalCommand
     {
