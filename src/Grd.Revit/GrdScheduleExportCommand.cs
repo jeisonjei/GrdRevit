@@ -48,7 +48,7 @@ namespace GrdRevit
                     return Result.Cancelled;
                 }
 
-                var rows = ReadTable(schedule);
+                var rows = ReadTable(doc, schedule);
                 if (rows.Count == 0)
                 {
                     TaskDialog.Show("JTOOLS: экспорт спецификации",
@@ -129,9 +129,14 @@ namespace GrdRevit
             return null;
         }
 
-        /// <summary>Читает таблицу спецификации: заголовок (если есть), шапка и тело — как показано в Revit.</summary>
-        private static List<string[]> ReadTable(ViewSchedule schedule)
+        /// <summary>Читает таблицу спецификации: шапка, тело, итоги, подвал — как показано в Revit.
+        /// Перед чтением документ пересчитывается, а секции таблицы принудительно обновляются:
+        /// иначе рассчитанные значения (формулы, итоги) могут вернуть пустые ячейки.</summary>
+        private static List<string[]> ReadTable(Document doc, ViewSchedule schedule)
         {
+            try { doc.Regenerate(); }
+            catch (Exception ex) { GrdLog.Log("GrdScheduleExportCommand: Regenerate EXCEPTION " + ex); }
+
             var rows = new List<string[]>();
             var td = schedule.GetTableData();
             int maxCols = 0;
@@ -142,6 +147,8 @@ namespace GrdRevit
                 var sd = td.GetSectionData(st);
                 if (sd == null) continue;
                 try { if (sd.HideSection) continue; } catch { }
+                try { sd.RefreshData(); }
+                catch (Exception ex) { GrdLog.Log("GrdScheduleExportCommand: RefreshData(" + st + ") EXCEPTION " + ex); }
                 int r = sd.NumberOfRows;
                 int c = sd.NumberOfColumns;
                 maxCols = Math.Max(maxCols, c);
@@ -151,7 +158,11 @@ namespace GrdRevit
                     for (int j = 0; j < c; j++)
                     {
                         try { line[j] = sd.GetCellText(i, j) ?? string.Empty; }
-                        catch { line[j] = string.Empty; }
+                        catch (Exception ex)
+                        {
+                            line[j] = string.Empty;
+                            GrdLog.Log("GrdScheduleExportCommand: GetCellText(" + st + ", " + i + ", " + j + ") EXCEPTION " + ex.Message);
+                        }
                     }
                     sections.Add((st, line));
                 }
