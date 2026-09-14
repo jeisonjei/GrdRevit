@@ -64,18 +64,37 @@
                              ToolTip="Фильтрует список видов по имени"/>
                     <Button Content="✕" Click="OnFilterReset" Margin="4,0,14,0" Width="24" Padding="0"/>
 
+                    <RadioButton x:Name="RbAll" Content="Всё" GroupName="ViewPreset" IsChecked="True"
+                                 VerticalAlignment="Center" Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="RbPlans" Content="Планы" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="RbSections" Content="Разрезы" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="Rb3d" Content="3D" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="RbSheets" Content="Листы" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="RbSchedules" Content="Спецификации" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,10,0" Checked="OnPresetChanged"/>
+                    <RadioButton x:Name="RbManual" Content="Вручную…" GroupName="ViewPreset" VerticalAlignment="Center"
+                                 Margin="0,0,14,0" Checked="OnPresetChanged"
+                                 ToolTip="Редкие комбинации типов: отметьте нужные чекбоксы вручную"/>
+                    <TextBlock x:Name="CountText" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <StackPanel x:Name="ManualFiltersPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="54,0,0,4">
+                    <TextBlock Text="Типы:" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
                     <CheckBox x:Name="ChkSection" Content="Разрезы" IsChecked="True" VerticalAlignment="Center"
                               Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
                     <CheckBox x:Name="ChkPlan" Content="Планы" IsChecked="True" VerticalAlignment="Center"
                               Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
                     <CheckBox x:Name="Chk3d" Content="3D" IsChecked="True" VerticalAlignment="Center"
-                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
                     <CheckBox x:Name="ChkSheet" Content="Листы" IsChecked="True" VerticalAlignment="Center"
-                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
                     <CheckBox x:Name="ChkSchedule" Content="Спецификации" IsChecked="True" VerticalAlignment="Center"
-                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,14,0"/>
-                    <TextBlock x:Name="CountText" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                              Checked="OnFilterChanged" Unchecked="OnFilterChanged" Margin="0,0,10,0"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="2,4,0,0">
                     <TextBlock Text="Способ поиска:" VerticalAlignment="Center" Margin="0,0,8,0"

@@ -194,6 +194,41 @@ namespace GrdRevit.Ui
             ApplyFilter();
         }
 
+        /// <summary>Пресет фильтра типов: одним кликом показать только нужный тип
+        /// либо «Всё» сразу. Редкие комбинации — пресет «Вручную…», он просто
+        /// показывает чекбоксы (ManualFiltersPanel) с текущим состоянием.</summary>
+        private void OnPresetChanged(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is RadioButton rb) || rb.IsChecked != true) return;
+            ApplyPreset(rb);
+        }
+
+        private void ApplyPreset(RadioButton rb)
+        {
+            // null-guard: Checked пресетов срабатывает ещё во время InitializeComponent.
+            if (FilterBox == null || ChkSection == null || ChkPlan == null || Chk3d == null ||
+                ChkSheet == null || ChkSchedule == null || RbManual == null) return;
+            if (rb == RbAll) SetTypeChecks(true, true, true, true, true);
+            else if (rb == RbPlans) SetTypeChecks(false, true, false, false, false);
+            else if (rb == RbSections) SetTypeChecks(true, false, false, false, false);
+            else if (rb == Rb3d) SetTypeChecks(false, false, true, false, false);
+            else if (rb == RbSheets) SetTypeChecks(false, false, false, true, false);
+            else if (rb == RbSchedules) SetTypeChecks(false, false, false, false, true);
+
+            if (ManualFiltersPanel != null)
+                ManualFiltersPanel.Visibility = rb == RbManual ? Visibility.Visible : Visibility.Collapsed;
+            ApplyFilter();
+        }
+
+        private void SetTypeChecks(bool section, bool plan, bool d3, bool sheet, bool schedule)
+        {
+            ChkSection.IsChecked = section;
+            ChkPlan.IsChecked = plan;
+            Chk3d.IsChecked = d3;
+            ChkSheet.IsChecked = sheet;
+            ChkSchedule.IsChecked = schedule;
+        }
+
         private void OnFilterReset(object sender, RoutedEventArgs e)
         {
             FilterBox.Clear();
