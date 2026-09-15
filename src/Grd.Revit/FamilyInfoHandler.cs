@@ -40,6 +40,10 @@ namespace GrdRevit.Revit
         public string Group = string.Empty;
         /// <summary>GUID общего параметра (пусто для несемейного).</summary>
         public string Guid = string.Empty;
+        /// <summary>Параметр есть в самом семействе (в FamilyManager). False — параметр
+        /// добавлен на уровне проекта («Управление параметрами проекта» в основном окне
+        /// Revit): привязан к категории семейства в этом документе, но не вшит в RFA.</summary>
+        public bool IsInFamily = true;
     }
 
     /// <summary>
@@ -269,6 +273,10 @@ namespace GrdRevit.Revit
                         messages.Add("«" + name + "»: у семейства нет диспетчера параметров");
                     }
                     perFamily[name] = list;
+                    // Дополняем «проектными» параметрами (добавленными через главное окно Revit,
+                    // «Управление параметрами проекта»): они привязаны к категории семейства в этом
+                    // документе, но не вшиты в RFA, и FamilyManager их не показывает.
+                    AddProjectParams(doc, fam, list);
                     GrdLog.Log("FamilyInfoHandler: «" + name + "» параметров=" + list.Count + ": " +
                                JoinNames(list));
                 }
@@ -321,6 +329,73 @@ namespace GrdRevit.Revit
             var names = list.Select(p => p.Name).Where(n => !string.IsNullOrEmpty(n)).ToList();
             if (names.Count > max) return string.Join("; ", names.Take(max)) + "; …(" + names.Count + ")";
             return string.Join("; ", names);
+        }
+
+        /// <summary>
+        /// Дополняет список параметров семейства «проектными» (добавленными через
+        /// «Управление параметрами проекта» в основном окне Revit): это общие (shared)
+        /// параметры, привязанные здесь к категории семейства, но не вшитые в само RFA
+        /// (поэтому их нет в FamilyManager). Отмечаются IsInFamily = false.
+        /// </summary>
+        private static void AddProjectParams(Document doc, Family family, List<FamilyParamInfo> push)
+        {
+            try
+            {
+                var famCat = family.Category;
+                if (famCat == null) return;
+
+                var already = new HashSet<string>(push.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+                foreach (object entry in doc.ParameterBindings)
+                {
+                    Definition def = null;
+                    Binding binding = null;
+                    if (entry is KeyValuePair<Definition, Binding> kp)
+                    {
+                        def = kp.Key;
+                        binding = kp.Value;
+                    }
+                    else if (entry is System.Collections.DictionaryEntry de)
+                    {
+                        def = de.Key as Definition;
+                        binding = de.Value as Binding;
+                    }
+                    var eb = binding as ElementBinding;
+                    if (def == null || eb == null) continue;
+                    var name = def.Name;
+                    if (string.IsNullOrEmpty(name) || already.Contains(name)) continue;
+
+                    var cats = eb.Categories;
+                    if (cats == null || cats.IsEmpty) continue;
+                    var bound = false;
+                    foreach (Category c in cats)
+                    {
+                        if (c == null) continue;
+                        if (c.Id == famCat.Id || string.Equals(c.Name, famCat.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            bound = true;
+                            break;
+                        }
+                    }
+                    if (!bound) continue;
+                    if (!(def is ExternalDefinition ext)) continue;
+
+                    push.Add(new FamilyParamInfo
+                    {
+                        Name = name,
+                        IsShared = true,
+                        IsInstance = binding is InstanceBinding,
+                        StorageType = DescribeType(def),
+                        Group = GroupName(def),
+                        Guid = ext.GUID.ToString(),
+                        IsInFamily = false
+                    });
+                    already.Add(name);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler: проектные параметры «" + (family?.Name ?? "?") + "» EXCEPTION: " + ex);
+            }
         }
 
         private static Family FindFamily(Document doc, string name)

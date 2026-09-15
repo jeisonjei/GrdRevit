@@ -274,6 +274,21 @@ namespace GrdRevit.Revit
                     }
                 }
 
+                // «Перенести в семейство» / добавление общего параметра, который СЕЙЧАС
+                // привязан к проекту: значения параметра лежат на экземплярах (или типах)
+                // в документе. Сохраняем их ДО перезагрузки семейства, после LoadFamily
+                // возвращаем обратно (иначе значения обнуляются).
+                var valueSnapshots = new List<ParamValueSnapshot>();
+                foreach (var op in ops)
+                {
+                    if (op == null || string.IsNullOrEmpty(op.Name) || op.Remove) continue;
+                    if (op.Source != ParamSourceKind.Shared) continue;
+                    if (!string.Equals(op.Status, "Добавить", StringComparison.OrdinalIgnoreCase)) continue;
+                    var binding = ProjectBindingFor(doc, family, op);
+                    if (binding == null) continue;
+                    valueSnapshots.AddRange(CaptureValues(doc, family, op.Name, binding));
+                }
+
                 string tempPath = null;
                 bool loaded = false;
                 var beforeNames = FamilyNames(doc);
@@ -338,6 +353,26 @@ namespace GrdRevit.Revit
                         {
                             try { if (rt.HasStarted()) rt.RollBack(); } catch { }
                             GrdLog.Log("FamilyParamsHandler: restore «" + familyName + "» EXCEPTION: " + ex);
+                        }
+                    }
+                }
+
+                // Возвращаем значения параметров, перенесённых в семейство
+                // (см. CaptureValues/ParamValueSnapshot).
+                if (valueSnapshots.Count > 0)
+                {
+                    using (var vt = new Transaction(doc, "JTOOLS: восстановить значения параметров семейства"))
+                    {
+                        try
+                        {
+                            vt.Start();
+                            RestoreValues(doc, familyName, valueSnapshots);
+                            vt.Commit();
+                        }
+                        catch (Exception ex)
+                        {
+                            try { if (vt.HasStarted()) vt.RollBack(); } catch { }
+                            GrdLog.Log("FamilyParamsHandler: restore values «" + familyName + "» EXCEPTION: " + ex);
                         }
                     }
                 }
@@ -638,6 +673,172 @@ namespace GrdRevit.Revit
             }
             GrdLog.Log("FamilyParamsHandler.VerifyOne: «" + familyName + "» параметров=" + fmCount);
             return sb.ToString();
+        }
+
+        /// <summary>Снимок значения параметра, который переносится из проекта в семейство:
+        /// экземпляры при перезагрузке семейства не меняются (ищем по ElementId),
+        /// типы — пересоздаются (ищем по имени типа).</summary>
+        private sealed class ParamValueSnapshot
+        {
+            public string ParamName = string.Empty;
+            public string SymbolName;          // для типа: имя типа
+            public ElementId InstanceId;       // для экземпляра: элемент документа
+            public bool HasValue;
+            public string ValueString = string.Empty;
+            public bool IsStringStorage;
+        }
+
+        /// <summary>Привязка общего параметра в ДОКУМЕНТЕ к категории семейства
+        /// (InstanceBinding/TypeBinding), либо null, если параметр в проект не привязан
+        /// (тогда и сохранять значения нечего).</summary>
+        private static Binding ProjectBindingFor(Document doc, Family family, FamilyParamOp op)
+        {
+            try
+            {
+                var famCat = family.Category;
+                if (famCat == null) return null;
+                foreach (object entry in doc.ParameterBindings)
+                {
+                    Definition def = null;
+                    Binding binding = null;
+                    if (entry is KeyValuePair<Definition, Binding> kp) { def = kp.Key; binding = kp.Value; }
+                    else if (entry is System.Collections.DictionaryEntry de) { def = de.Key as Definition; binding = de.Value as Binding; }
+                    var eb = binding as ElementBinding;
+                    if (def == null || eb == null) continue;
+                    if (!string.Equals(def.Name, op.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                    var cats = eb.Categories;
+                    if (cats == null) continue;
+                    foreach (Category c in cats)
+                    {
+                        if (c == null) continue;
+                        if (c.Id == famCat.Id || string.Equals(c.Name, famCat.Name, StringComparison.OrdinalIgnoreCase))
+                            return binding;
+                    }
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.ProjectBindingFor «" + op.Name + "» EXCEPTION: " + ex);
+                return null;
+            }
+        }
+
+        /// <summary>Захватывает текущие значения параметра на всех экземплярах (при
+        /// instance-привязке) либо на всех типах (при type-привязке) семейства в документе.</summary>
+        private static List<ParamValueSnapshot> CaptureValues(Document doc, Family family, string paramName, Binding binding)
+        {
+            var list = new List<ParamValueSnapshot>();
+            try
+            {
+                if (binding is InstanceBinding)
+                {
+                    foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+                    {
+                        var fi = e as FamilyInstance;
+                        if (fi?.Symbol?.Family == null) continue;
+                        if (fi.Symbol.Family.Id != family.Id) continue;
+                        var p = fi.LookupParameter(paramName);
+                        var s = CaptureOne(p, fi.Id, null);
+                        if (s != null) list.Add(s);
+                    }
+                }
+                else
+                {
+                    var ids = family.GetFamilySymbolIds();
+                    if (ids == null) return list;
+                    foreach (var sid in ids)
+                    {
+                        var sym = doc.GetElement(sid) as FamilySymbol;
+                        if (sym == null) continue;
+                        var p = sym.LookupParameter(paramName);
+                        var s = CaptureOne(p, ElementId.InvalidElementId, sym.Name);
+                        if (s != null) list.Add(s);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.CaptureValues «" + paramName + "» EXCEPTION: " + ex);
+            }
+            GrdLog.Log("FamilyParamsHandler.CaptureValues: «" + paramName + "» экземпляров/типов=" + list.Count);
+            return list;
+        }
+
+        private static ParamValueSnapshot CaptureOne(Parameter p, ElementId instanceId, string symbolName)
+        {
+            if (p == null) return null;
+            try
+            {
+                var snap = new ParamValueSnapshot
+                {
+                    ParamName = p.Definition?.Name ?? string.Empty,
+                    SymbolName = symbolName,
+                    InstanceId = instanceId,
+                    IsStringStorage = p.StorageType == StorageType.String
+                };
+                try { snap.HasValue = p.HasValue; } catch { }
+                if (snap.HasValue)
+                    snap.ValueString = snap.IsStringStorage ? p.AsString() : p.AsValueString();
+                return snap;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.CaptureOne EXCEPTION: " + ex);
+                return null;
+            }
+        }
+
+        /// <summary>Возвращает значения перенесённых параметров после перезагрузки семейства:
+        /// текст — Set(string), иначе SetValueString (значение с единицами, как было).</summary>
+        private static void RestoreValues(Document doc, string familyName, List<ParamValueSnapshot> snaps)
+        {
+            if (snaps == null || snaps.Count == 0) return;
+            int restored = 0, failed = 0;
+            Family family = null;
+            try
+            {
+                foreach (var s in snaps)
+                {
+                    try
+                    {
+                        Parameter p = null;
+                        if (s.InstanceId == null || s.InstanceId == ElementId.InvalidElementId)
+                        {
+                            if (family == null) family = FindFamilyByName(doc, familyName);
+                            if (family == null) { failed++; continue; }
+                            var ids = family.GetFamilySymbolIds();
+                            if (ids == null) { failed++; continue; }
+                            foreach (var sid in ids)
+                            {
+                                var sym = doc.GetElement(sid) as FamilySymbol;
+                                if (sym == null || !string.Equals(sym.Name, s.SymbolName, StringComparison.OrdinalIgnoreCase)) continue;
+                                p = sym.LookupParameter(s.ParamName);
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            var el = doc.GetElement(s.InstanceId);
+                            p = el?.LookupParameter(s.ParamName);
+                        }
+                        if (p == null) { failed++; continue; }
+                        if (!s.HasValue) continue;
+                        if (s.IsStringStorage) p.Set(s.ValueString);
+                        else p.SetValueString(s.ValueString);
+                        restored++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        GrdLog.Log("FamilyParamsHandler.RestoreValues «" + s.ParamName + "» EXCEPTION: " + ex);
+                    }
+                }
+            }
+            finally
+            {
+                GrdLog.Log("FamilyParamsHandler.RestoreValues: восстановлено=" + restored + ", не удалось=" + failed);
+            }
         }
 
         private static Family FindFamilyByName(Document doc, string familyName)

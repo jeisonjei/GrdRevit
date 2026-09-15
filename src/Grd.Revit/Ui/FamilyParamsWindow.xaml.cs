@@ -99,6 +99,11 @@ namespace GrdRevit.Ui
         public bool IsInstance { get; set; }
         public string BindingText => IsInstance ? "экземпляр" : "тип";
         public string Guid { get; set; } = string.Empty;
+        /// <summary>Параметр вшит в само семейство (False — только параметр проекта).</summary>
+        public bool IsInFamily { get; set; } = true;
+        /// <summary>Доступен ли «Перенести в семейство»: только для общих параметров,
+        /// которых ещё нет в семействе.</summary>
+        public bool Movable => IsShared && !IsInFamily;
     }
 
     /// <summary>
@@ -306,6 +311,7 @@ namespace GrdRevit.Ui
                                 Name = p.Name,
                                 IsShared = p.IsShared,
                                 IsInstance = p.IsInstance,
+                                IsInFamily = p.IsInFamily,
                                 StorageType = string.IsNullOrEmpty(p.StorageType) ? "—" : p.StorageType,
                                 Group = string.IsNullOrEmpty(p.Group) ? "—" : p.Group,
                                 Guid = p.Guid ?? string.Empty
@@ -677,6 +683,77 @@ namespace GrdRevit.Ui
                 Status = "Изменить привязку",
                 IsInstance = !row.IsInstance
             });
+        }
+
+        /// <summary>
+        /// «В семейство»: вшивает общий параметр (добавленный на уровне проекта) в само
+        /// семейство — у всех отмеченных семейств. После этого параметр — часть RFA и не
+        /// зависит от параметров проекта (работает в любом проекте, куда загрузится семейство).
+        /// </summary>
+        private void OnMoveToFamily(object sender, RoutedEventArgs e)
+        {
+            var row = (sender as FrameworkElement)?.DataContext as FamilyParamRow;
+            if (row == null || !row.Movable) return;
+
+            var families = FamilyChecks.Where(f => f.IsChecked).Select(f => f.Name).ToList();
+            if (families.Count == 0)
+            {
+                MessageBox.Show("Отметьте хотя бы одно семейство (галка слева от имени).",
+                    "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (!row.IsShared || string.IsNullOrEmpty(row.Guid))
+            {
+                MessageBox.Show("«Перенести в семейство» доступно только для общих (shared) параметров, " +
+                    "добавленных к проекту («Управление параметрами проекта»), а не к семействам.",
+                    "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var famWord = families.Count == 1 ? "семейство" : "семейства";
+            var answer = MessageBox.Show(
+                "Общий параметр «" + row.Name + "» будет вшит в " + families.Count + " отмеченн" +
+                (families.Count == 1 ? "ое " : "ых ") + famWord +
+                " — каждое семейство отредактируется и перезагрузится в проект.\n\n" +
+                "После этого параметр станет частью файла семейства и будет одинаковым в любом проекте, " +
+                "куда загрузится семейство. Продолжить?",
+                "Перенести в семейство", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.OK) return;
+
+            try
+            {
+                var ev = RevitContext.FamilyParamsEvent;
+                var handler = RevitContext.FamilyParamsHandler;
+                if (ev == null || handler == null)
+                {
+                    MessageBox.Show("Обработчик изменения параметров не доступен.",
+                        "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var op = new FamilyParamOp
+                {
+                    Name = row.Name,
+                    Source = ParamSourceKind.Shared,
+                    Status = "Добавить",
+                    SharedGuid = row.Guid,
+                    IsInstance = row.IsInstance,
+                    StorageType = string.IsNullOrEmpty(row.StorageType) || row.StorageType == "—" ? "Текст" : row.StorageType,
+                    Group = string.IsNullOrEmpty(row.Group) || row.Group == "—" ? "Данные" : row.Group
+                };
+
+                GrdLog.Log("OnMoveToFamily: «" + row.Name + "» в " + families.Count + " семейств" +
+                           ", guid=" + row.Guid + ", экземпляр=" + row.IsInstance);
+                handler.Queue(families, new List<FamilyParamOp> { op },
+                    RevitContext.Settings.LastSharedParamsPath, ShowResult);
+                ev.Raise();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("OnMoveToFamily: EXCEPTION " + ex);
+                MessageBox.Show("Ошибка: " + ex.Message, "Параметры семейств",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void OnLoadSharedFile(object sender, RoutedEventArgs e)

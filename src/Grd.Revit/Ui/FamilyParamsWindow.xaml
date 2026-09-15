@@ -211,12 +211,15 @@
                             <DataGridTextColumn Header="Тип" Binding="{Binding StorageType}" Width="1*"/>
                             <DataGridTextColumn Header="Группа" Binding="{Binding Group}" Width="1*"/>
                             <DataGridTextColumn Header="Привязка" Binding="{Binding BindingText}" Width="80" CanUserResize="False"/>
-                            <DataGridTemplateColumn Header="Действия" Width="138" CanUserResize="False">
+                            <DataGridTemplateColumn Header="Действия" Width="214" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Content="Удалить" Click="OnRowRemove" Padding="8,1" Width="60"/>
-                                            <Button Content="Изменить" Click="OnRowChangeBinding" Margin="4,0,0,0" Padding="8,1" Width="66"/>
+                                            <Button Content="Удалить" Click="OnRowRemove" Padding="8,1" Width="54"/>
+                                            <Button Content="Изменить" Click="OnRowChangeBinding" Margin="4,0,0,0" Padding="8,1" Width="62"/>
+                                            <Button Content="В семейство" Click="OnMoveToFamily" Margin="4,0,0,0" Padding="8,1" Width="80"
+                                                    IsEnabled="{Binding Movable}"
+                                                    ToolTip="Вшить общий параметр в семейство, чтобы он был частью RFA и не зависел от параметров этого проекта. Доступно для общих параметров, добавленных на уровне проекта («Управление параметрами проекта»), — их нет в самом семействе."/>
                                         </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
