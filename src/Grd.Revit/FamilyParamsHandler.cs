@@ -220,9 +220,51 @@ namespace GrdRevit.Revit
             var removed = new List<string>();
             var skipped = new List<string>();
             var already = new List<string>();
+            var rebound = new List<string>();
+            var reboundNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var sameName = 0;
             try
             {
+                // Параметры, привязанные к категории в ПРОЕКТЕ, но не встроенные
+                // в семейство, в FamilyManager отсутствуют — «экземпляр ↔ тип» для
+                // них выполняется перепривязкой в проекте (ReInsert). Делаем это
+                // отдельной транзакцией проекта ДО правок семейного файла.
+                try
+                {
+                    bool anyProjectRebind = false;
+                    foreach (var op in ops)
+                    {
+                        if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                        if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (FindParam(fdoc.FamilyManager, op) != null) continue;
+                        anyProjectRebind = true;
+                        break;
+                    }
+                    if (anyProjectRebind)
+                    {
+                        using (var pt = new Transaction(doc, "JTOOLS: смена привязки параметров (проект)"))
+                        {
+                            pt.Start();
+                            foreach (var op in ops)
+                            {
+                                if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                                if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+                                if (FindParam(fdoc.FamilyManager, op) != null) continue;
+                                if (TryProjectRebind(doc, family, op))
+                                {
+                                    rebound.Add(op.Name + " (" + (op.IsInstance ? "тип→экземпляр" : "экземпляр→тип") + ")");
+                                    reboundNames.Add(op.Name);
+                                }
+                            }
+                            pt.Commit();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("FamilyParamsHandler: проектная перепривязка EXCEPTION: " + ex);
+                }
+
                 // Изменение параметров в документе семейства ОБЯЗАНО идти внутри
                 // транзакции этого документа. Иначе AddParameter/RemoveParameter/
                 // MakeInstance оставляют «висячие» правки: сводка показывает «добавлено»,
@@ -235,6 +277,7 @@ namespace GrdRevit.Revit
                         foreach (var op in ops)
                         {
                             if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                            if (reboundNames.Contains(op.Name)) continue;
                             try
                             {
                                 ApplyOp(fdoc, app, op, added, removed, skipped, already);
@@ -266,6 +309,7 @@ namespace GrdRevit.Revit
                     var nb = new List<string>();
                     if (already.Count > 0) nb.Add("уже есть: " + string.Join(", ", already));
                     if (skipped.Count > 0) nb.Add("пропущено: " + string.Join(", ", skipped));
+                    if (rebound.Count > 0) nb.Add("смена привязки (проект): " + string.Join(", ", rebound));
                     GrdLog.Log("FamilyParamsHandler: «" + familyName + "» без изменений — без перезагрузки");
                     return "«" + familyName + "»: " + (nb.Count > 0 ? string.Join("; ", nb) : "нет изменений");
                 }
@@ -274,14 +318,15 @@ namespace GrdRevit.Revit
                 // после LoadFamily Revit обнуляет их, и мы вернём их обратно (RestoreBinding).
                 // Момент важен: правки сделаны только в документе семейства, проект не тронут.
                 var bindSnapshots = new List<BindingSnapshot>();
-                foreach (var op in ops)
-                {
-                    if (op == null || string.IsNullOrEmpty(op.Name)) continue;
-                    if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
-                    try
+foreach (var op in ops)
                     {
-                        bindSnapshots.Add(CaptureBinding(doc, familyName, op.Name, wasInstance: !op.IsInstance));
-                    }
+                        if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                        if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (reboundNames.Contains(op.Name)) continue;
+                        try
+                        {
+                            bindSnapshots.Add(CaptureBinding(doc, familyName, op.Name, wasInstance: !op.IsInstance));
+                        }
                     catch (Exception ex)
                     {
                         GrdLog.Log("FamilyParamsHandler: capture «" + op.Name + "» EXCEPTION: " + ex);
@@ -423,6 +468,7 @@ namespace GrdRevit.Revit
             if (already.Count > 0) parts.Add("уже есть: " + string.Join(", ", already));
             if (removed.Count > 0) parts.Add("удалено: " + string.Join(", ", removed));
             if (skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", skipped));
+            if (rebound.Count > 0) parts.Add("смена привязки (проект): " + string.Join(", ", rebound));
             if (sameName > 1)
                 parts.Add("ПРЕДУПРЕЖДЕНИЕ: в проекте " + sameName +
                           " семейства с именем «" + familyName + "» (дубликат) — перезагружено одно." +
@@ -755,6 +801,51 @@ namespace GrdRevit.Revit
             {
                 GrdLog.Log("FamilyParamsHandler.ProjectBindingFor «" + op.Name + "» EXCEPTION: " + ex);
                 return null;
+            }
+        }
+
+        /// <summary>Смена «экземпляр ↔ тип» для параметра, привязанного к категории
+        /// в ПРОЕКТЕ, но не встроенного в семейство (в FamilyManager его нет):
+        /// перепривязка в BindingMap новым InstanceBinding/TypeBinding.
+        /// ReInsert без параметра группы сохраняет текущую группировку параметра.</summary>
+        private static bool TryProjectRebind(Document doc, Family family, FamilyParamOp op)
+        {
+            try
+            {
+                var famCat = family?.Category;
+                if (famCat == null) return false;
+                foreach (object entry in doc.ParameterBindings)
+                {
+                    Definition def = null;
+                    Binding binding = null;
+                    if (entry is KeyValuePair<Definition, Binding> kp) { def = kp.Key; binding = kp.Value; }
+                    else if (entry is System.Collections.DictionaryEntry de) { def = de.Key as Definition; binding = de.Value as Binding; }
+                    else continue;
+                    var eb = binding as ElementBinding;
+                    if (def == null || eb == null) continue;
+                    if (!string.Equals(def.Name, op.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                    var cats = eb.Categories;
+                    if (cats == null) continue;
+                    bool match = false;
+                    foreach (Category c in cats)
+                    {
+                        if (c == null) continue;
+                        if (c.Id == famCat.Id || string.Equals(c.Name, famCat.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            match = true;
+                            break;
+                        }
+                    }
+                    if (!match) continue;
+                    Binding nb = op.IsInstance ? (Binding)new InstanceBinding(cats) : new TypeBinding(cats);
+                    return doc.ParameterBindings.ReInsert(def, nb);
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.TryProjectRebind «" + op.Name + "» EXCEPTION: " + ex);
+                return false;
             }
         }
 
