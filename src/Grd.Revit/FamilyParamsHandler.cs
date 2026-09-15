@@ -29,6 +29,8 @@ namespace GrdRevit.Revit
         private List<string> _familyNames;
         private List<FamilyParamOp> _ops;
         private string _sharedFilePath;
+        private bool _clearFormulaMode;
+        private string _clearFormulaParam;
         private Action<FamilyParamsResult> _callback;
 
         public void Queue(List<string> familyNames, List<FamilyParamOp> ops, string sharedFilePath, Action<FamilyParamsResult> callback)
@@ -38,6 +40,24 @@ namespace GrdRevit.Revit
                 _familyNames = familyNames ?? new List<string>();
                 _ops = ops ?? new List<FamilyParamOp>();
                 _sharedFilePath = sharedFilePath ?? string.Empty;
+                _clearFormulaMode = false;
+                _clearFormulaParam = null;
+                _callback = callback;
+            }
+        }
+
+        /// <summary>Очередь операции «снять формулу»: у указанного параметра убирается
+        /// формула во всех отмеченных семействах (все типы), затем семейства
+        /// перезагружаются в проект.</summary>
+        public void QueueClearFormula(List<string> familyNames, string paramName, Action<FamilyParamsResult> callback)
+        {
+            lock (_sync)
+            {
+                _familyNames = familyNames ?? new List<string>();
+                _ops = null;
+                _sharedFilePath = null;
+                _clearFormulaMode = true;
+                _clearFormulaParam = paramName ?? string.Empty;
                 _callback = callback;
             }
         }
@@ -52,16 +72,22 @@ namespace GrdRevit.Revit
             List<string> names;
             List<FamilyParamOp> ops;
             string path;
+            bool clearFormula;
+            string clearParam;
             Action<FamilyParamsResult> cb;
             lock (_sync)
             {
                 names = _familyNames;
                 ops = _ops;
                 path = _sharedFilePath;
+                clearFormula = _clearFormulaMode;
+                clearParam = _clearFormulaParam;
                 cb = _callback;
                 _familyNames = null;
                 _ops = null;
                 _sharedFilePath = null;
+                _clearFormulaMode = false;
+                _clearFormulaParam = null;
                 _callback = null;
             }
             if (cb == null)
@@ -73,7 +99,9 @@ namespace GrdRevit.Revit
             var result = new FamilyParamsResult();
             try
             {
-                result = Apply(app, names, ops, path);
+                result = clearFormula
+                    ? ApplyClearFormula(app, names, clearParam)
+                    : Apply(app, names, ops, path);
             }
             catch (Exception ex)
             {
@@ -297,6 +325,191 @@ namespace GrdRevit.Revit
             if (removed.Count > 0) parts.Add("удалено: " + string.Join(", ", removed));
             if (skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", skipped));
             return "«" + familyName + "»: " + (parts.Count > 0 ? string.Join("; ", parts) : "нет изменений");
+        }
+
+        /// <summary>
+        /// Операция «снять формулу»: у заданного параметра убирается формула во всех
+        /// переданных семействах (у всех типов), после чего каждое семейство
+        /// перезагружается в проект. Используется перед сменой привязки
+        /// «экземпляр ↔ тип»: параметр, связанный с формулой, Revit не даёт
+        /// переключить/отредактировать.
+        /// </summary>
+        private static FamilyParamsResult ApplyClearFormula(UIApplication app, List<string> names, string paramName)
+        {
+            var result = new FamilyParamsResult();
+            var uiDoc = app?.ActiveUIDocument;
+            if (uiDoc?.Document == null)
+            {
+                result.Errors.Add("Нет активного документа Revit.");
+                result.TotalFamilies = names == null ? 0 : names.Count;
+                return result;
+            }
+            var doc = uiDoc.Document;
+            result.TotalFamilies = names == null ? 0 : names.Count;
+            if (result.TotalFamilies == 0)
+            {
+                result.Errors.Add("Не выбрано ни одного семейства.");
+                return result;
+            }
+            if (string.IsNullOrWhiteSpace(paramName))
+            {
+                result.Errors.Add("Не задано имя параметра.");
+                return result;
+            }
+
+            foreach (var familyName in names)
+            {
+                var line = ClearFormulaOne(doc, familyName, paramName);
+                if (line.StartsWith("!")) result.Errors.Add(line);
+                else { result.AppliedFamilies++; result.Summary.Add(line); }
+            }
+            return result;
+        }
+
+        /// <summary>Снимает формулу у параметра в одном семействе (все типы) и
+        /// перезагружает семейство в проект. Возвращает строку отчёта; `!` в начале —
+        /// ошибка.</summary>
+        private static string ClearFormulaOne(Document doc, string familyName, string paramName)
+        {
+            Family family = null;
+            foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+            {
+                var f = e as Family;
+                if (f == null || string.IsNullOrEmpty(f.Name)) continue;
+                if (string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    family = f;
+                    break;
+                }
+            }
+            if (family == null) return "! Семейство «" + familyName + "» не найдено в документе.";
+            if (family.IsInPlace)
+                return "! «" + familyName + "»: встроенное (in-place) семейство — файла семейства нет, формулу снять нельзя.";
+            if (!family.IsEditable)
+                return "! «" + familyName + "»: семейство недоступно для редактирования.";
+
+            Document fdoc = null;
+            try { fdoc = doc.EditFamily(family); }
+            catch (Exception ex)
+            {
+                return "! «" + familyName + "»: не удалось открыть семейство: " + ex.Message;
+            }
+
+            int cleared = 0;
+            try
+            {
+                using (var ft = new Transaction(fdoc, "JTOOLS: снять формулу «" + paramName + "» («" + familyName + "»)"))
+                {
+                    ft.Start();
+                    try
+                    {
+                        var fm = fdoc.FamilyManager;
+                        if (fm != null && fm.Types != null)
+                        {
+                            foreach (FamilyType type in fm.Types)
+                            {
+                                fm.CurrentType = type;
+                                foreach (FamilyParameter fp in fm.GetParameters())
+                                {
+                                    if (fp?.Definition == null) continue;
+                                    if (!string.Equals(fp.Definition.Name, paramName, StringComparison.OrdinalIgnoreCase)) continue;
+                                    bool hasFormula = false;
+                                    try { hasFormula = fp.IsDeterminedByFormula; } catch { }
+                                    if (!hasFormula) continue;
+                                    fm.SetFormula(fp, null);
+                                    cleared++;
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        try { ft.RollBack(); } catch { }
+                        throw;
+                    }
+                    ft.Commit();
+                }
+
+                if (cleared == 0)
+                    return "«" + familyName + "»: параметр «" + paramName + "» не определён формулой (снимать нечего)";
+
+                string tempPath = null;
+                bool loaded = false;
+                using (var t = new Transaction(doc, "JTOOLS: перезагрузка семейства «" + familyName + "»"))
+                {
+                    t.Start();
+                    try
+                    {
+                        tempPath = System.IO.Path.Combine(
+                            System.IO.Path.GetTempPath(),
+                            SafeFamilyFileName(familyName));
+                        if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
+                        fdoc.SaveAs(tempPath, new SaveAsOptions());
+                        loaded = doc.LoadFamily(tempPath, new FamilyLoadOptionsImpl(), out var loadedFamily);
+                        t.Commit();
+                    }
+                    catch
+                    {
+                        try { t.RollBack(); } catch { }
+                        throw;
+                    }
+                    finally
+                    {
+                        if (!string.IsNullOrEmpty(tempPath))
+                        {
+                            try { if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath); } catch { }
+                        }
+                    }
+                }
+                if (!loaded)
+                    return "! «" + familyName + "»: LoadFamily вернул false — формула не снята.";
+
+                if (ParamStillReadOnly(doc, familyName, paramName))
+                    return "! «" + familyName + "»: параметр «" + paramName + "» остался только для чтения — формула не снята.";
+
+                GrdLog.Log("FamilyParamsHandler: снята формула «" + paramName + "» в «" + familyName + "» (типы=" + cleared + ")");
+                return "«" + familyName + "»: формула снята («" + paramName + "», все типы)";
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.ClearFormulaOne «" + familyName + "» EXCEPTION: " + ex);
+                return "! «" + familyName + "»: " + ex.Message;
+            }
+            finally
+            {
+                try { fdoc.Dispose(); } catch { }
+            }
+        }
+
+        /// <summary>Проверка после перезагрузки: параметр не должен остаться
+        /// только для чтения (иначе формула, по сути, не снята). True только при
+        /// явном подтверждении IsReadOnly; если параметр не найден — не блокируем.</summary>
+        private static bool ParamStillReadOnly(Document doc, string familyName, string paramName)
+        {
+            try
+            {
+                foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+                {
+                    var f = e as Family;
+                    if (f == null || string.IsNullOrEmpty(f.Name)) continue;
+                    if (!string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var ids = f.GetFamilySymbolIds();
+                    if (ids == null) continue;
+                    foreach (var sid in ids)
+                    {
+                        var sym = doc.GetElement(sid) as FamilySymbol;
+                        if (sym == null) continue;
+                        var p = sym.LookupParameter(paramName);
+                        if (p != null) return p.IsReadOnly;
+                    }
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.ParamStillReadOnly EXCEPTION: " + ex);
+            }
+            return false;
         }
 
         /// <summary>

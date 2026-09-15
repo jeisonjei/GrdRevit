@@ -19,6 +19,8 @@
                     <Button Content="Добавить обычный параметр" Click="OnAddFamilyParam" Padding="8,3"/>
                     <Button Content="Добавить общий параметр…" Click="OnAddSharedParam" Margin="6,0,0,0" Padding="8,3"/>
                     <Button Content="Удалить выбранные строки" Click="OnRemoveOps" Margin="6,0,0,0" Padding="8,3"/>
+                    <Button Content="Снять формулу…" Click="OnClearFormula" Margin="6,0,0,0" Padding="8,3"
+                            ToolTip="Убирает формулу у параметра во всех отмеченных семействах (всех типов) перед сменой привязки «экземпляр ↔ тип»."/>
                     <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
                                Foreground="{StaticResource TextSecondaryBrush}"
                                Text="«Общий» = общий (shared) параметр из файла; «Семейный» = обычный параметр семейства. «Изменить привязку» = переключить экземпляр↔тип."/>
@@ -147,11 +149,13 @@
                             <TextBlock x:Name="FamiliesCount" VerticalAlignment="Center" Margin="10,0,0,0"
                                        Foreground="{StaticResource TextSecondaryBrush}"/>
                             <Button Content="Обновить" Click="OnRefresh" Margin="10,0,0,0" Padding="10,2"/>
-                            <CheckBox x:Name="SelectedModeBox" Content="Только выбранные в Revit"
-                                      Margin="12,0,0,0" VerticalAlignment="Center"
-                                      Checked="OnSelectedModeToggled" Unchecked="OnSelectedModeToggled"
-                                      ToolTip="Показывать и отмечать только семейства выделенных в Revit элементов. Снимите галочку, чтобы вернуться к списку всех семейств документа."/>
                         </StackPanel>
+                        <DockPanel Margin="0,2,0,2">
+                            <CheckBox x:Name="SelectedModeBox" Content="Только выбранные / спецификация"
+                                      DockPanel.Dock="Left" VerticalAlignment="Center"
+                                      Checked="OnSelectedModeToggled" Unchecked="OnSelectedModeToggled"
+                                      ToolTip="Показывать и отмечать только «нужные» семейства: если открыт вид спецификации — семейства из неё; иначе — семейства выделенных в Revit элементов. Снимите галочку, чтобы вернуться к списку всех семейств документа."/>
+                        </DockPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                             <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
                                        Foreground="{StaticResource TextSecondaryBrush}"/>

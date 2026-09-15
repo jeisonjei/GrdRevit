@@ -199,12 +199,17 @@ namespace GrdRevit.Ui
                             : result.Error;
                         if (_selectedMode)
                         {
-                            // Режим «выбранные»: отмечаем все найденные семейства сразу,
-                            // чтобы область применения соответствовала выделению в Revit.
+                            // Режим «только выбранные/спецификация»: отмечаем все найденные
+                            // семейства сразу, чтобы область применения соответствовала
+                            // спецификации либо выделению в Revit.
                             foreach (var f in FamilyChecks) f.IsChecked = true;
                             FamiliesCount.Text = FamilyChecks.Count > 0
-                                ? "из выделения в Revit: " + FamilyChecks.Count
-                                : "не выбрано ни одного семейства в активном виде";
+                                ? (string.IsNullOrEmpty(result.Scope)
+                                    ? "из выделения в Revit: "
+                                    : "из спецификации «" + result.Scope + "»: ") + FamilyChecks.Count
+                                : (string.IsNullOrEmpty(result.Scope)
+                                    ? "не выделено ни одного семейства в активном виде"
+                                    : "в спецификации «" + result.Scope + "» семейств не найдено");
                         }
                         ApplyFamFilter();
 
@@ -480,6 +485,65 @@ namespace GrdRevit.Ui
             OpsGrid.CommitEdit(DataGridEditingUnit.Row, true);
             var toRemove = OpsGrid.SelectedItems.Cast<object>().ToList();
             foreach (var item in toRemove) Ops.Remove(item as ParamOpRow);
+        }
+
+        /// <summary>
+        /// «Снять формулу…»: у заданного параметра формула убирается во всех отмеченных
+        /// семействах (все типы), семейства перезагружаются в проект. Это нужно перед
+        /// сменой привязки «экземпляр ↔ тип» — параметр с формулой Revit не даёт
+        /// переключить.
+        /// </summary>
+        private void OnClearFormula(object sender, RoutedEventArgs e)
+        {
+            var families = FamilyChecks.Where(f => f.IsChecked).Select(f => f.Name).ToList();
+            if (families.Count == 0)
+            {
+                MessageBox.Show("Отметьте хотя бы одно семейство (галка слева от имени).",
+                    "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var dialog = new InputDialog
+            {
+                Owner = this,
+                Title = "Снять формулу (" + families.Count + " семейств)",
+                Prompt = "Введите имя параметра, у которого нужно снять формулу. Оно будет " +
+                         "убрано у всех типов отмеченных семейств, после чего семейства перезагрузятся в проект."
+            };
+
+            if (dialog.ShowDialog() != true) return;
+            var paramName = dialog.Value?.Trim();
+            if (string.IsNullOrEmpty(paramName)) return;
+
+            var answer = MessageBox.Show(
+                "Будет отредактировано само СЕМЕЙСТВО (как через «Редактировать семейство»): " +
+                "у параметра «" + paramName + "» формула уберётся у всех типов " + families.Count +
+                " отмеченных семейств, после чего они перезагрузятся в проект.\n\n" +
+                "Это затронет ВСЕ экземпляры этих семейств в проекте. Продолжить?",
+                "Снять формулу", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.OK) return;
+
+            try
+            {
+                var ev = RevitContext.FamilyParamsEvent;
+                var handler = RevitContext.FamilyParamsHandler;
+                if (ev == null || handler == null)
+                {
+                    MessageBox.Show("Обработчик изменения параметров не доступен.",
+                        "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                GrdLog.Log("OnClearFormula: семейств=" + families.Count + ", параметр='" + paramName + "'");
+                handler.QueueClearFormula(families, paramName, ShowResult);
+                ev.Raise();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("OnClearFormula: EXCEPTION " + ex);
+                MessageBox.Show("Ошибка: " + ex.Message, "Параметры семейств",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         /// <summary>Добавляет операцию в верхнюю таблицу без явных дубликатов.</summary>
