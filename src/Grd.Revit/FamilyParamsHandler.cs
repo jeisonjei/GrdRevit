@@ -31,6 +31,8 @@ namespace GrdRevit.Revit
         private string _sharedFilePath;
         private bool _clearFormulaMode;
         private string _clearFormulaParam;
+        private bool _verifyMode;
+        private List<FamilyParamOp> _verifyOps;
         private Action<FamilyParamsResult> _callback;
 
         public void Queue(List<string> familyNames, List<FamilyParamOp> ops, string sharedFilePath, Action<FamilyParamsResult> callback)
@@ -42,6 +44,8 @@ namespace GrdRevit.Revit
                 _sharedFilePath = sharedFilePath ?? string.Empty;
                 _clearFormulaMode = false;
                 _clearFormulaParam = null;
+                _verifyMode = false;
+                _verifyOps = null;
                 _callback = callback;
             }
         }
@@ -58,6 +62,28 @@ namespace GrdRevit.Revit
                 _sharedFilePath = null;
                 _clearFormulaMode = true;
                 _clearFormulaParam = paramName ?? string.Empty;
+                _verifyMode = false;
+                _verifyOps = null;
+                _callback = callback;
+            }
+        }
+
+        /// <summary>Очередь проверки: фактически сверяет по каждому отмеченному семейству,
+        /// есть ли в нём каждый параметр из <paramref name="ops"/> (в диспетчере параметров
+        /// и на типе в проекте). Работает без изменения документов — только чтение.
+        /// Нужно, чтобы отличить «параметр не добавился» от «добавился, но не показан
+        /// в списке» (список при нескольких семействах показывает лишь общие для всех).</summary>
+        public void QueueVerify(List<string> familyNames, List<FamilyParamOp> ops, Action<FamilyParamsResult> callback)
+        {
+            lock (_sync)
+            {
+                _familyNames = familyNames ?? new List<string>();
+                _ops = null;
+                _sharedFilePath = null;
+                _clearFormulaMode = false;
+                _clearFormulaParam = null;
+                _verifyMode = true;
+                _verifyOps = ops ?? new List<FamilyParamOp>();
                 _callback = callback;
             }
         }
@@ -74,6 +100,8 @@ namespace GrdRevit.Revit
             string path;
             bool clearFormula;
             string clearParam;
+            bool verify;
+            List<FamilyParamOp> verifyOps;
             Action<FamilyParamsResult> cb;
             lock (_sync)
             {
@@ -82,12 +110,16 @@ namespace GrdRevit.Revit
                 path = _sharedFilePath;
                 clearFormula = _clearFormulaMode;
                 clearParam = _clearFormulaParam;
+                verify = _verifyMode;
+                verifyOps = _verifyOps;
                 cb = _callback;
                 _familyNames = null;
                 _ops = null;
                 _sharedFilePath = null;
                 _clearFormulaMode = false;
                 _clearFormulaParam = null;
+                _verifyMode = false;
+                _verifyOps = null;
                 _callback = null;
             }
             if (cb == null)
@@ -99,9 +131,11 @@ namespace GrdRevit.Revit
             var result = new FamilyParamsResult();
             try
             {
-                result = clearFormula
-                    ? ApplyClearFormula(app, names, clearParam)
-                    : Apply(app, names, ops, path);
+                result = verify
+                    ? ApplyVerify(app, names, verifyOps)
+                    : clearFormula
+                        ? ApplyClearFormula(app, names, clearParam)
+                        : Apply(app, names, ops, path);
             }
             catch (Exception ex)
             {
@@ -479,6 +513,142 @@ namespace GrdRevit.Revit
             {
                 try { fdoc.Dispose(); } catch { }
             }
+        }
+
+        /// <summary>Проверка фактического состояния выбранных семейств (только чтение):
+        /// открывает документ каждого семейства и сверяет, есть ли в нём каждый параметр
+        /// из <paramref name="ops"/> — и в диспетчере параметров, и на типе в проекте.
+        /// Отчёт по каждому семейству — в Summary, ошибки — в Errors.</summary>
+        private static FamilyParamsResult ApplyVerify(UIApplication app, List<string> names, List<FamilyParamOp> ops)
+        {
+            var result = new FamilyParamsResult();
+            var uiDoc = app?.ActiveUIDocument;
+            if (uiDoc?.Document == null)
+            {
+                result.Errors.Add("Нет активного документа Revit.");
+                result.TotalFamilies = names == null ? 0 : names.Count;
+                return result;
+            }
+            var doc = uiDoc.Document;
+            result.TotalFamilies = names == null ? 0 : names.Count;
+            if (names == null || names.Count == 0)
+            {
+                result.Errors.Add("Не выбрано ни одного семейства.");
+                return result;
+            }
+            var checkNames = (ops ?? new List<FamilyParamOp>())
+                .Where(o => o != null && !string.IsNullOrEmpty(o.Name))
+                .Select(o => o.Name.Trim())
+                .Where(n => n.Length > 0)
+                .ToList();
+            GrdLog.Log("FamilyParamsHandler.ApplyVerify: семейств=" + names.Count +
+                       ", проверяемых параметров=" + checkNames.Count + ": " + string.Join("; ", checkNames));
+
+            foreach (var familyName in names)
+            {
+                try
+                {
+                    var line = VerifyOne(doc, familyName, checkNames);
+                    if (line.StartsWith("!")) result.Errors.Add(line);
+                    else { result.AppliedFamilies++; result.Summary.Add(line); }
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("FamilyParamsHandler.ApplyVerify «" + familyName + "» EXCEPTION: " + ex);
+                    result.Errors.Add("«" + familyName + "»: " + ex.Message);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Отчёт по одному семейству: количество параметров и для каждого
+        /// проверяемого имени — есть/нет (в диспетчере параметров и на типе в проекте).</summary>
+        private static string VerifyOne(Document doc, string familyName, IList<string> paramNames)
+        {
+            var family = FindFamilyByName(doc, familyName);
+            if (family == null) return "! «" + familyName + "» не найдено в документе.";
+
+            Document fdoc = null;
+            try { fdoc = doc.EditFamily(family); }
+            catch (Exception ex)
+            {
+                return "! «" + familyName + "»: не удалось открыть семейство: " + ex.Message;
+            }
+
+            var inFm = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int fmCount = 0;
+            try
+            {
+                var fm = fdoc.FamilyManager;
+                if (fm != null)
+                {
+                    foreach (FamilyParameter fp in fm.GetParameters())
+                    {
+                        if (fp?.Definition?.Name == null) continue;
+                        fmCount++;
+                        inFm.Add(fp.Definition.Name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.VerifyOne «" + familyName + "» FM EXCEPTION: " + ex);
+                return "! «" + familyName + "»: " + ex.Message;
+            }
+            finally
+            {
+                try { fdoc.Dispose(); } catch { }
+            }
+
+            // Параметры, реально доступные на типе семейства в проекте (после LoadFamily).
+            var onType = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var ids = family.GetFamilySymbolIds();
+                if (ids != null)
+                {
+                    foreach (var sid in ids)
+                    {
+                        var sym = doc.GetElement(sid) as FamilySymbol;
+                        if (sym?.Parameters == null) continue;
+                        foreach (Parameter p in sym.Parameters)
+                        {
+                            if (p?.Definition?.Name == null) continue;
+                            onType.Add(p.Definition.Name);
+                        }
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.VerifyOne «" + familyName + "» symbols EXCEPTION: " + ex);
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append("«").Append(familyName).Append("»: параметров в семействе ").Append(fmCount);
+            for (int i = 0; i < paramNames.Count; i++)
+            {
+                var p = paramNames[i];
+                bool fmHas = inFm.Contains(p);
+                bool typeHas = onType.Contains(p);
+                sb.Append("; «").Append(p).Append("»: ").Append(fmHas ? "есть" : "НЕТ");
+                if (fmHas != typeHas)
+                    sb.Append(" (в проекте: ").Append(typeHas ? "есть" : "нет").Append(")");
+            }
+            GrdLog.Log("FamilyParamsHandler.VerifyOne: «" + familyName + "» параметров=" + fmCount);
+            return sb.ToString();
+        }
+
+        private static Family FindFamilyByName(Document doc, string familyName)
+        {
+            foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+            {
+                var f = e as Family;
+                if (f == null || string.IsNullOrEmpty(f.Name)) continue;
+                if (string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase)) return f;
+            }
+            return null;
         }
 
         /// <summary>Проверка после перезагрузки: параметр не должен остаться

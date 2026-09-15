@@ -252,7 +252,6 @@ namespace GrdRevit.Revit
                         foreach (FamilyParameter fp in fm.GetParameters())
                         {
                             if (fp?.Definition == null) continue;
-                            if (!single && !fp.IsShared) continue; // несколько семейств — только общие
                             if (!seen.Add(fp.Definition.Name)) continue;
                             list.Add(new FamilyParamInfo
                             {
@@ -270,7 +269,8 @@ namespace GrdRevit.Revit
                         messages.Add("«" + name + "»: у семейства нет диспетчера параметров");
                     }
                     perFamily[name] = list;
-                    GrdLog.Log("FamilyInfoHandler: «" + name + "» параметров=" + list.Count);
+                    GrdLog.Log("FamilyInfoHandler: «" + name + "» параметров=" + list.Count + ": " +
+                               JoinNames(list));
                 }
                 catch (Exception ex)
                 {
@@ -293,13 +293,16 @@ namespace GrdRevit.Revit
 
             var lists = perFamily.Values.ToList();
             var result = new List<FamilyParamInfo>();
+            // «Общий для всех» = параметр с таким именем есть в КАЖДОМ отмеченном
+            // семействе — и общий (shared), и обычный семейный. Раньше учитывались
+            // только shared-параметры, из-за чего добавленный «обычный» параметр
+            // (или общий, применённый не ко всем семействам) не показывался в списке.
             foreach (var candidate in lists[0])
             {
-                if (!candidate.IsShared) continue;
                 var inAll = true;
                 foreach (var other in lists.Skip(1))
                 {
-                    if (!other.Any(p => p.IsShared &&
+                    if (!other.Any(p =>
                         string.Equals(p.Name, candidate.Name, StringComparison.OrdinalIgnoreCase)))
                     {
                         inAll = false;
@@ -308,7 +311,16 @@ namespace GrdRevit.Revit
                 }
                 if (inAll) result.Add(candidate);
             }
+            GrdLog.Log("FamilyInfoHandler: общих для всех параметров=" + result.Count + ": " + JoinNames(result));
             return result;
+        }
+
+        /// <summary>Имена параметров через «; » для журнала (не более <paramref name="max"/>).</summary>
+        private static string JoinNames(IEnumerable<FamilyParamInfo> list, int max = 25)
+        {
+            var names = list.Select(p => p.Name).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            if (names.Count > max) return string.Join("; ", names.Take(max)) + "; …(" + names.Count + ")";
+            return string.Join("; ", names);
         }
 
         private static Family FindFamily(Document doc, string name)

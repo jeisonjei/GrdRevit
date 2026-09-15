@@ -546,6 +546,100 @@ namespace GrdRevit.Ui
             }
         }
 
+        /// <summary>
+        /// «Проверить…»: сверяет фактическое наличие параметров (строк таблицы) в каждом
+        /// отмеченном семействе — напрямую через диспетчер параметров и тип в проекте.
+        /// Только чтение: ничего не меняет. Нужно, чтобы отделить «параметр не добавился»
+        /// от «добавился, но не показан в списке» (при нескольких семействах список справа
+        /// показывает лишь общие для всех).
+        /// </summary>
+        private void OnVerify(object sender, RoutedEventArgs e)
+        {
+            var families = FamilyChecks.Where(f => f.IsChecked).Select(f => f.Name).ToList();
+            if (families.Count == 0)
+            {
+                MessageBox.Show("Отметьте хотя бы одно семейство (галка слева от имени).",
+                    "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            OpsGrid.CommitEdit(DataGridEditingUnit.Row, true);
+            var ops = Ops
+                .Where(r => !string.IsNullOrWhiteSpace(r.Name))
+                .Select(r => new FamilyParamOp
+                {
+                    Name = r.Name.Trim(),
+                    Source = r.IsShared ? ParamSourceKind.Shared : ParamSourceKind.Family,
+                    Status = r.Status
+                })
+                .ToList();
+            if (ops.Count == 0)
+            {
+                MessageBox.Show("В таблице «Параметры для применения» нет ни одной строки. " +
+                    "Добавьте параметр кнопками «Добавить обычный параметр» / «Добавить общий параметр…», " +
+                    "затем «Проверить…» покажет, есть ли уже такие параметры в отмеченных семействах.",
+                    "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                var ev = RevitContext.FamilyParamsEvent;
+                var handler = RevitContext.FamilyParamsHandler;
+                if (ev == null || handler == null)
+                {
+                    MessageBox.Show("Обработчик изменения параметров не доступен.",
+                        "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                GrdLog.Log("OnVerify: семейств=" + families.Count + ", операций=" + ops.Count);
+                handler.QueueVerify(families, ops, ShowVerifyResult);
+                ev.Raise();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("OnVerify: EXCEPTION " + ex);
+                MessageBox.Show("Ошибка: " + ex.Message, "Параметры семейств",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ShowVerifyResult(FamilyParamsResult result)
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                if (result.Summary.Count > 0) sb.Append(string.Join(Environment.NewLine, result.Summary));
+                if (result.Errors.Count > 0)
+                {
+                    if (sb.Length > 0) sb.AppendLine().AppendLine();
+                    sb.Append("Не удалось проверить:").AppendLine();
+                    sb.Append(string.Join(Environment.NewLine, result.Errors));
+                }
+                if (sb.Length == 0) sb.Append("Нет данных.");
+
+                GrdLog.Log("FamilyParams.ShowVerifyResult: " + sb.ToString().Replace("\r", " ").Replace("\n", " "));
+
+                var content = sb.ToString();
+                if (content.Length > 6000) content = content.Substring(0, 6000) + "…(полный отчёт в журнале grd-revit.log)";
+                var td = new TaskDialog("Проверка параметров семейств")
+                {
+                    MainInstruction = "Проверено семейств: " + result.AppliedFamilies +
+                        (result.Errors.Count > 0 ? " из " + result.TotalFamilies : ""),
+                    MainContent = content,
+                    ExpandedContent = "«есть» — параметр присутствует в диспетчере параметров семейства; " +
+                        "«НЕТ» — параметра нет (операция не применена или имя отличается). " +
+                        "Пометка «(в проекте: …)» — расхождение между документом семейства и типом в проекте (например, семейство не перезагружено)."
+                };
+                td.Show();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ShowVerifyResult: EXCEPTION " + ex);
+            }
+        }
+
         /// <summary>Добавляет операцию в верхнюю таблицу без явных дубликатов.</summary>
         private void AddOp(ParamOpRow op)
         {
