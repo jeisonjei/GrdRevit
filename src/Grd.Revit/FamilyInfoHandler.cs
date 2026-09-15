@@ -25,6 +25,9 @@ namespace GrdRevit.Revit
         public List<FamilyParamInfo> Params = new List<FamilyParamInfo>();
         /// <summary>Предупреждения при чтении параметров (напр. «семейство не удалось открыть»).</summary>
         public string ParamsMessage = "";
+        /// <summary>Откуда взяты семейства в режиме «только выбранные»: название спецификации
+        /// (если считали из неё) либо пусто (обычное выделение элементов).</summary>
+        public string Scope = "";
     }
 
     /// <summary>Параметр выбранного семейства (для правой панели окна).</summary>
@@ -136,9 +139,10 @@ namespace GrdRevit.Revit
                 }
                 if (selectedOnly)
                 {
-                    var selected = SelectedFamilyNames(uiDoc, docNames);
+                    var selected = ActiveScopeFamilyNames(uiDoc, docNames, out var scopeName);
+                    res.Scope = scopeName ?? string.Empty;
                     res.Families = selected.Select(n => new FamilyInfoItem { Name = n }).ToList();
-                    GrdLog.Log("FamilyInfoHandler: из выделения семейств=" + res.Families.Count);
+                    GrdLog.Log("FamilyInfoHandler: из выделения/спецификации семейств=" + res.Families.Count);
                 }
                 else
                 {
@@ -318,14 +322,43 @@ namespace GrdRevit.Revit
         }
 
         /// <summary>
-        /// Имена семейств выделенных в Revit элементов (экземпляров семейств или самих
-        /// семейств из обозревателя проекта), ограниченные теми, что есть в документе.
-        /// Если выделение пусто или не содержит семейств — пустой список.
+        /// Определяет семейства для режима «только выбранные»:
+        /// если активный вид — спецификация (перечень) элементов, берутся семейства её
+        /// категорий с размещёнными в проекте экземплярами (название спецификации
+        /// возвращается в <paramref name="scheduleName"/>); иначе — семейства выделенных
+        /// в Revit элементов (экземпляров или самих семейств из обозревателя проекта).
+        /// Результат ограничен семействами, которые есть в документе.
         /// </summary>
-        private static List<string> SelectedFamilyNames(UIDocument uiDoc, ISet<string> docNames)
+        private static List<string> ActiveScopeFamilyNames(UIDocument uiDoc, ISet<string> docNames, out string scheduleName)
         {
             var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            scheduleName = string.Empty;
             if (uiDoc == null) return result.ToList();
+
+            try
+            {
+                if (uiDoc.ActiveView is ViewSchedule schedule)
+                {
+                    var sd = schedule.Definition as ScheduleDefinition;
+                    // Работаем только с ведомостями элементов: ключевые спецификации
+                    // и спецификации материалов в этом сценарии не нужны.
+                    if (sd != null && !sd.IsKeySchedule && !sd.IsMaterialTakeoff)
+                    {
+                        var scheduled = ScheduleFamilyNames(uiDoc.Document, schedule);
+                        if (scheduled.Count > 0)
+                        {
+                            scheduleName = schedule.Name;
+                            GrdLog.Log("FamilyInfoHandler: спецификация «" + schedule.Name + "», семейств=" + scheduled.Count);
+                            return scheduled;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler: спецификация EXCEPTION: " + ex);
+            }
+
             try
             {
                 foreach (var id in uiDoc.Selection.GetElementIds())
@@ -342,6 +375,39 @@ namespace GrdRevit.Revit
             catch (Exception ex)
             {
                 GrdLog.Log("FamilyInfoHandler: выделение EXCEPTION: " + ex);
+            }
+            return result.ToList();
+        }
+
+        /// <summary>
+        /// Имена семейств элементов, реально отображаемых в спецификации (с учётом
+        /// применённых к ней фильтров, сортировки и группировки). Согласно документации
+        /// API, <see cref="ViewSchedule.GetScheduleInstances"/> с индексом сегмента -1
+        /// возвращает id всех экземпляров всей спецификации.
+        /// </summary>
+        private static List<string> ScheduleFamilyNames(Document doc, ViewSchedule schedule)
+        {
+            var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                schedule.RefreshData();
+                var ids = schedule.GetScheduleInstances(-1);
+                if (ids == null || ids.Count == 0) return result.ToList();
+                foreach (var id in ids)
+                {
+                    Element el = null;
+                    try { el = doc.GetElement(id); } catch { }
+                    if (el == null) continue;
+                    string name = null;
+                    if (el is FamilyInstance fi) name = fi.Symbol?.Family?.Name;
+                    else if (el is Family fam) name = fam.Name;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    result.Add(name);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler: GetScheduleInstances EXCEPTION: " + ex);
             }
             return result.ToList();
         }
