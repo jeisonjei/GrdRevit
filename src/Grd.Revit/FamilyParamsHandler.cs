@@ -220,6 +220,7 @@ namespace GrdRevit.Revit
             var removed = new List<string>();
             var skipped = new List<string>();
             var already = new List<string>();
+            var sameName = 0;
             try
             {
                 // Изменение параметров в документе семейства ОБЯЗАНО идти внутри
@@ -305,6 +306,21 @@ namespace GrdRevit.Revit
                 string tempPath = null;
                 bool loaded = false;
                 var beforeNames = FamilyNames(doc);
+
+                // Дубли семейства: если в проекте уже есть НЕСКОЛЬКО семейств с одним
+                // именем, LoadFamily предсказуемо обновить не может тот или иной —
+                // параметр «то появляется, то нет» (см. журналы). Предупреждаем заранее.
+                foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+                {
+                    var f = e as Family;
+                    if (f != null && !string.IsNullOrEmpty(f.Name) &&
+                        string.Equals(f.Name, family.Name, StringComparison.OrdinalIgnoreCase)) sameName++;
+                }
+                if (sameName > 1)
+                    GrdLog.Log("FamilyParamsHandler: ВНИМАНИЕ: в проекте " + sameName +
+                               " семейств с именем «" + family.Name + "» — LoadFamily обновит одно из них," +
+                               " остальное(ые) останется без изменений. Рекомендуется удалить дубль.");
+
                 GrdLog.Log("FamilyParamsHandler: до LoadFamily семейств=" + beforeNames.Count +
                            ": " + string.Join("; ", beforeNames));
                 using (var t = new Transaction(doc, "JTOOLS: параметры семейства «" + familyName + "»"))
@@ -315,13 +331,13 @@ namespace GrdRevit.Revit
                         // LoadFamily(Document, options) нельзя вызывать на модифицированном
                         // документе семейства («The document must not be modifiable...»).
                         // Поэтому сохраняем семейство во временный файл и загружаем по пути.
-                        // ВАЖНО: имя временного файла должно совпадать с именем семейства
-                        // в проекте — Revit именует «новое» семейство по имени RFA-файла,
-                        // иначе LoadFamily создаст семейство с именем файла (Audytor_<guid>)
-                        // вместо замены существующего.
+                        // ВАЖНО: имя временного файла должно максимально совпадать с тем,
+                        // из какого файла семейство попало в проект (fdoc.PathName), иначе
+                        // Revit нагрузит семейство «как новое» по имени RFA-файла и создаст
+                        // семейство-дубль вместо замены существующего (см. Audytor_<guid>).
                         tempPath = System.IO.Path.Combine(
                             System.IO.Path.GetTempPath(),
-                            SafeFamilyFileName(familyName));
+                            FamilyReloadFileName(fdoc, familyName));
                         if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
                         fdoc.SaveAs(tempPath, new SaveAsOptions());
                         loaded = doc.LoadFamily(tempPath, loadOpts, out var loadedFamily);
@@ -407,6 +423,10 @@ namespace GrdRevit.Revit
             if (already.Count > 0) parts.Add("уже есть: " + string.Join(", ", already));
             if (removed.Count > 0) parts.Add("удалено: " + string.Join(", ", removed));
             if (skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", skipped));
+            if (sameName > 1)
+                parts.Add("ПРЕДУПРЕЖДЕНИЕ: в проекте " + sameName +
+                          " семейства с именем «" + familyName + "» (дубликат) — перезагружено одно." +
+                          " Удалите дубль через «Управление семействами/Реторт», иначе результат может потеряться.");
             return "«" + familyName + "»: " + (parts.Count > 0 ? string.Join("; ", parts) : "нет изменений");
         }
 
@@ -912,34 +932,69 @@ namespace GrdRevit.Revit
                 var removed = beforeNames.Except(afterNames, StringComparer.OrdinalIgnoreCase).ToList();
 
                 int famCount = afterNames.Count;
-                int nameMatches = 0;
-                var userParams = new List<string>();
-                Family matched = null;
+                var matches = new List<string>();
+                var userParamsTotal = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
                 {
                     if (string.IsNullOrEmpty(e.Name)) continue;
                     if (!string.Equals(e.Name, familyName, StringComparison.OrdinalIgnoreCase)) continue;
-                    nameMatches++;
-                    if (nameMatches > 1) continue;
-                    try
+                    var fam = e as Family;
+                    var detail = "Id=" + e.Id.Value;
+                    if (fam != null)
                     {
-                        var ids = (e as Family)?.GetFamilySymbolIds();
-                        if (ids == null || ids.Count == 0) continue;
-                        var sym = doc.GetElement(ids.First()) as FamilySymbol;
-                        if (sym?.Parameters == null) continue;
-                        foreach (Parameter p in sym.Parameters)
+                        // Сколько экземпляров ссылается на это семейство.
+                        int instCount = 0;
+                        try
                         {
-                            if (p?.Definition == null) continue;
-                            if (p.Definition is InternalDefinition id && id.BuiltInParameter != BuiltInParameter.INVALID) continue;
-                            if (!string.IsNullOrEmpty(p.Definition.Name)) userParams.Add(p.Definition.Name);
+                            foreach (FamilyInstance fi in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+                            {
+                                if (fi.Symbol?.Family != null && fi.Symbol.Family.Id == fam.Id) instCount++;
+                            }
+                        }
+                        catch { }
+                        detail += ", экземпляров=" + instCount;
+                        try
+                        {
+                            var syms = fam.GetFamilySymbolIds();
+                            if (syms == null || syms.Count == 0)
+                            {
+                                detail += ", символов=0";
+                            }
+                            else
+                            {
+                                // Какие из добавлённых параметров реально видны на символах
+                                // хотя бы этого семейства.
+                                var presentNow = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                                foreach (var sid in syms)
+                                {
+                                    var sym = doc.GetElement(sid) as FamilySymbol;
+                                    if (sym?.Parameters == null) continue;
+                                    foreach (Parameter p in sym.Parameters)
+                                    {
+                                        if (p?.Definition == null) continue;
+                                        if (p.Definition is InternalDefinition pp && pp.BuiltInParameter != BuiltInParameter.INVALID) continue;
+                                        var pn = p.Definition.Name;
+                                        if (string.IsNullOrEmpty(pn)) continue;
+                                        userParamsTotal.Add(pn);
+                                        if (added.Any(a => string.Equals(a, pn, StringComparison.OrdinalIgnoreCase)))
+                                            presentNow.Add(pn);
+                                    }
+                                }
+                                detail += ", символов=" + syms.Count +
+                                    (presentNow.Count > 0
+                                        ? ", В СЕМЕЙСТВЕ ЕСТЬ: " + string.Join(", ", presentNow)
+                                        : ", добавленных нет");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            detail += ", параметры EXCEPTION: " + ex.Message;
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        GrdLog.Log("FamilyParamsHandler.Verify: параметры «" + familyName + "» EXCEPTION: " + ex);
-                    }
+                    matches.Add(detail);
                 }
-                var present = added.Where(n => userParams.Any(u =>
+
+                var present = added.Where(n => userParamsTotal.Any(u =>
                     string.Equals(u, n, StringComparison.OrdinalIgnoreCase))).ToList();
                 GrdLog.Log("FamilyParamsHandler.Verify: семейств=" + famCount +
                            " (было " + beforeNames.Count + "), " +
@@ -947,9 +1002,10 @@ namespace GrdRevit.Revit
                                ? "ПОЯВИЛИСЬ семейства: " + string.Join("; ", appended) + "; "
                                : "новых семейств нет; ") +
                            (removed.Count > 0 ? "исчезли: " + string.Join("; ", removed) + "; " : string.Empty) +
-                           "находок по имени «" + familyName + "»=" + nameMatches +
-                           (nameMatches > 1 ? " (ВНИМАНИЕ: LoadFamily создал дубль семейства)" : string.Empty) +
-                           ", пользовательских параметров=" + userParams.Count +
+                           "семейства с именем «" + familyName + "»=" + matches.Count +
+                           (matches.Count > 1 ? " (ВНИМАНИЕ: дубль!)" : string.Empty) +
+                           "; подробно: " + string.Join(" | ", matches) +
+                           ", пользовательских параметров=" + userParamsTotal.Count +
                            ", из добавленных присутствует: " + (present.Count > 0 ? string.Join(", ", present) : "<нет>"));
             }
             catch (Exception ex)
@@ -966,6 +1022,29 @@ namespace GrdRevit.Revit
             foreach (var c in System.IO.Path.GetInvalidFileNameChars())
                 s = s.Replace(c, '_');
             return s + ".rfa";
+        }
+
+        /// <summary>Имя временного файла для перезагрузки: берём имя файла, из которого
+        /// семейство загружено в проект (PathName документа семейства). При совпадении
+        /// имени Revit расценивает файл как тот же и заменяет семейство на месте; при
+        /// расхождении (например, лишний пробел перед .rfa) может создать дубль семейства.
+        /// Если путь неизвестен — используем имя семейства.</summary>
+        private static string FamilyReloadFileName(Document fdoc, string familyName)
+        {
+            try
+            {
+                var path = fdoc?.PathName;
+                if (!string.IsNullOrEmpty(path))
+                {
+                    var baseName = System.IO.Path.GetFileName(path);
+                    if (!string.IsNullOrEmpty(baseName)) return baseName;
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.FamilyReloadFileName EXCEPTION: " + ex);
+            }
+            return SafeFamilyFileName(familyName);
         }
 
         /// <summary>Отсортированный список имён всех семейств документа.</summary>
@@ -1066,6 +1145,9 @@ namespace GrdRevit.Revit
                 throw new InvalidOperationException("Файл общих параметров не открыт: загрузите файл общих параметров (.txt) в окне");
 
             var def = FindSharedDef(spf, op);
+            GrdLog.Log("FamilyParamsHandler.AddShared: файл=" + spf.Filename +
+                       ", guid=" + op.SharedGuid + ", имя=" + op.Name +
+                       ", def найден=" + (def != null));
             if (def == null)
             {
                 var groupName = string.IsNullOrEmpty(op.Group) ? "Параметры" : op.Group;
@@ -1077,11 +1159,16 @@ namespace GrdRevit.Revit
                         : System.Guid.Parse(op.SharedGuid)
                 };
                 def = grp.Definitions.Create(options) as ExternalDefinition;
+                GrdLog.Log("FamilyParamsHandler.AddShared: создано новое определение, GUID=" +
+                           (def != null ? def.GUID.ToString() : "<null>"));
                 if (def == null)
                     throw new InvalidOperationException("Не удалось создать определение общего параметра «" + op.Name + "»");
             }
 
-            return fdoc.FamilyManager.AddParameter(def, GroupFor(op.Group), op.IsInstance);
+            var fp = fdoc.FamilyManager.AddParameter(def, GroupFor(op.Group), op.IsInstance);
+            GrdLog.Log("FamilyParamsHandler.AddShared: AddParameter OK, имя=" +
+                       (fp?.Definition?.Name ?? "<null>") + ", экземпляр=" + op.IsInstance);
+            return fp;
         }
 
         private static ExternalDefinition FindSharedDef(DefinitionFile file, FamilyParamOp op)

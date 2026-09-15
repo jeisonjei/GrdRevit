@@ -345,6 +345,11 @@ namespace GrdRevit.Revit
                 if (famCat == null) return;
 
                 var already = new HashSet<string>(push.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+
+                // Собираем кандидатов из привязок: с Revit 2021 ключи BindingMap —
+                // InternalDefinition (не ExternalDefinition), поэтому конкретный тип
+                // не проверяем. Пропускаем встроенные параметры.
+                var candidates = new List<(string Name, Binding Binding, Definition Def)>();
                 foreach (object entry in doc.ParameterBindings)
                 {
                     Definition def = null;
@@ -361,6 +366,7 @@ namespace GrdRevit.Revit
                     }
                     var eb = binding as ElementBinding;
                     if (def == null || eb == null) continue;
+                    if (def is InternalDefinition kitem && kitem.BuiltInParameter != BuiltInParameter.INVALID) continue;
                     var name = def.Name;
                     if (string.IsNullOrEmpty(name) || already.Contains(name)) continue;
 
@@ -377,16 +383,36 @@ namespace GrdRevit.Revit
                         }
                     }
                     if (!bound) continue;
-                    if (!(def is ExternalDefinition ext)) continue;
+                    candidates.Add((name, binding, def));
+                }
+
+                if (candidates.Count == 0) return;
+
+                // GUID и принадлежность к общим параметрам у InternalDefinition по имени
+                // не получить — берём у реальных параметров элементов семейства в проекте
+                // (Parameter.GUID/IsShared). Параметры уровня типа есть у символов,
+                // уровня экземпляра — у размещённых экземпляров, поэтому смотрим и то,
+                // и другое. Если параметр не найден ни на одном элементе, GUID остаётся
+                // пустым (IsShared тогда не подтверждён).
+                var probes = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+                var probeNames = candidates.Select(c => c.Name).ToList();
+                ProbeSharedGuids(doc, family, probeNames, probes);
+
+                foreach (var (name, binding, def) in candidates)
+                {
+                    var isInstance = binding is InstanceBinding;
+                    Guid guid = Guid.Empty;
+                    if (def is ExternalDefinition ext) guid = ext.GUID;
+                    else if (probes.TryGetValue(name, out var probeGuid)) guid = probeGuid;
 
                     push.Add(new FamilyParamInfo
                     {
                         Name = name,
-                        IsShared = true,
-                        IsInstance = binding is InstanceBinding,
+                        IsShared = guid != Guid.Empty,
+                        IsInstance = isInstance,
                         StorageType = DescribeType(def),
                         Group = GroupName(def),
-                        Guid = ext.GUID.ToString(),
+                        Guid = guid != Guid.Empty ? guid.ToString() : string.Empty,
                         IsInFamily = false
                     });
                     already.Add(name);
@@ -395,6 +421,67 @@ namespace GrdRevit.Revit
             catch (Exception ex)
             {
                 GrdLog.Log("FamilyInfoHandler: проектные параметры «" + (family?.Name ?? "?") + "» EXCEPTION: " + ex);
+            }
+        }
+
+        /// <summary>
+        /// Проецирует GUID общих параметров проекта на их имена: для каждого имени из
+        /// <paramref name="names"/> ищется параметр на символах семейства (параметры типа)
+        /// и на размещённых экземплярах (параметры экземпляра). У общих параметров
+        /// <see cref="Parameter.GUID"/> возвращает GUID из файла общих параметров,
+        /// у обычных семейных — Guid.Empty.
+        /// </summary>
+        private static void ProbeSharedGuids(Document doc, Family family, List<string> names, Dictionary<string, Guid> map)
+        {
+            if (names == null || names.Count == 0) return;
+            var wanted = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+
+            void Scan(ParameterSet set)
+            {
+                if (set == null) return;
+                foreach (Parameter p in set)
+                {
+                    try
+                    {
+                        if (p?.Definition == null) continue;
+                        var n = p.Definition.Name;
+                        if (string.IsNullOrEmpty(n) || !wanted.Contains(n)) continue;
+                        if (map.ContainsKey(n)) continue;
+                        var g = p.GUID;
+                        if (g != Guid.Empty) map[n] = g;
+                    }
+                    catch { }
+                }
+            }
+
+            try
+            {
+                var ids = family.GetFamilySymbolIds();
+                if (ids != null)
+                {
+                    foreach (var sid in ids)
+                    {
+                        var sym = doc.GetElement(sid) as FamilySymbol;
+                        if (sym == null) continue;
+                        Scan(sym.Parameters);
+                    }
+                }
+
+                int scanned = 0;
+                foreach (FamilyInstance fi in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+                {
+                    try
+                    {
+                        if (fi.Symbol?.Family == null || fi.Symbol.Family.Id != family.Id) continue;
+                        if (scanned++ >= 200) break;
+                        Scan(fi.Parameters);
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler: ProbeSharedGuids EXCEPTION: " + ex);
             }
         }
 
