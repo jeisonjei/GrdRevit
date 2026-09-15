@@ -219,6 +219,7 @@ namespace GrdRevit.Revit
             var added = new List<string>();
             var removed = new List<string>();
             var skipped = new List<string>();
+            var already = new List<string>();
             try
             {
                 // Изменение параметров в документе семейства ОБЯЗАНО идти внутри
@@ -235,7 +236,7 @@ namespace GrdRevit.Revit
                             if (op == null || string.IsNullOrEmpty(op.Name)) continue;
                             try
                             {
-                                ApplyOp(fdoc, app, op, added, removed, skipped);
+                                ApplyOp(fdoc, app, op, added, removed, skipped, already);
                             }
                             catch (Exception ex)
                             {
@@ -255,6 +256,18 @@ namespace GrdRevit.Revit
                            "» параметров=" + fdoc.FamilyManager?.GetParameters().Count +
                            ", OwnerFamily=" + (fdoc.OwnerFamily?.Name ?? "<null>") +
                            ", PathName=" + (fdoc.PathName ?? "<н/з>"));
+
+                // Если в семействе ничего не изменилось (параметры в нём уже были —
+                // добавление сработало только для других семейств), перезагружать его
+                // не нужно: перезагрузка вхолостую может затронуть значения параметров.
+                if (added.Count == 0 && removed.Count == 0)
+                {
+                    var nb = new List<string>();
+                    if (already.Count > 0) nb.Add("уже есть: " + string.Join(", ", already));
+                    if (skipped.Count > 0) nb.Add("пропущено: " + string.Join(", ", skipped));
+                    GrdLog.Log("FamilyParamsHandler: «" + familyName + "» без изменений — без перезагрузки");
+                    return "«" + familyName + "»: " + (nb.Count > 0 ? string.Join("; ", nb) : "нет изменений");
+                }
 
                 // Снимаем текущие значения параметров со сменой привязки «экземпляр ↔ тип»:
                 // после LoadFamily Revit обнуляет их, и мы вернём их обратно (RestoreBinding).
@@ -391,6 +404,7 @@ namespace GrdRevit.Revit
 
             var parts = new List<string>();
             if (added.Count > 0) parts.Add("добавлено: " + string.Join(", ", added));
+            if (already.Count > 0) parts.Add("уже есть: " + string.Join(", ", already));
             if (removed.Count > 0) parts.Add("удалено: " + string.Join(", ", removed));
             if (skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", skipped));
             return "«" + familyName + "»: " + (parts.Count > 0 ? string.Join("; ", parts) : "нет изменений");
@@ -966,7 +980,7 @@ namespace GrdRevit.Revit
         }
 
         private static void ApplyOp(Document fdoc, UIApplication app, FamilyParamOp op,
-            List<string> added, List<string> removed, List<string> skipped)
+            List<string> added, List<string> removed, List<string> skipped, List<string> already)
         {
             var fm = fdoc.FamilyManager;
             if (op.Remove)
@@ -1005,6 +1019,16 @@ namespace GrdRevit.Revit
                 {
                     skipped.Add(op.Name + " (ошибка: " + ex.Message + ")");
                 }
+                return;
+            }
+
+            // Добавление: если параметр в этом семействе УЖЕ есть (с тем же именем),
+            // не пытаемся добавить повторно (Revit это запрещает) — просто пропускаем
+            // с пометкой «уже есть». Так параметр добавляется только тем семействам,
+            // в которых его нет, а в остальных остаётся как есть.
+            if (FindParam(fm, op) != null)
+            {
+                already.Add(op.Name);
                 return;
             }
 
