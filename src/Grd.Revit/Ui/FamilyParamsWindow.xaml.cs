@@ -101,6 +101,8 @@ namespace GrdRevit.Ui
         public string Guid { get; set; } = string.Empty;
         /// <summary>Параметр вшит в само семейство (False — только параметр проекта).</summary>
         public bool IsInFamily { get; set; } = true;
+        /// <summary>У параметра стоит формула (значение определяется формулой).</summary>
+        public bool HasFormula { get; set; }
         /// <summary>Доступен ли «Перенести в семейство»: только для общих параметров,
         /// которых ещё нет в семействе.</summary>
         public bool Movable => IsShared && !IsInFamily;
@@ -312,6 +314,7 @@ namespace GrdRevit.Ui
                                 IsShared = p.IsShared,
                                 IsInstance = p.IsInstance,
                                 IsInFamily = p.IsInFamily,
+                                HasFormula = p.HasFormula,
                                 StorageType = string.IsNullOrEmpty(p.StorageType) ? "—" : p.StorageType,
                                 Group = string.IsNullOrEmpty(p.Group) ? "—" : p.Group,
                                 Guid = p.Guid ?? string.Empty
@@ -494,13 +497,16 @@ namespace GrdRevit.Ui
         }
 
         /// <summary>
-        /// «Снять формулу…»: у заданного параметра формула убирается во всех отмеченных
-        /// семействах (все типы), семейства перезагружаются в проект. Это нужно перед
-        /// сменой привязки «экземпляр ↔ тип» — параметр с формулой Revit не даёт
-        /// переключить.
+        /// Кнопка «снять формулу» в строке таблицы параметров: у заданного параметра
+        /// формула убирается во всех отмеченных семействах (все типы), семейства
+        /// перезагружаются в проект. Работает как в «Параметрах экземпляра», но для
+        /// всех отмеченных семейств.
         /// </summary>
-        private void OnClearFormula(object sender, RoutedEventArgs e)
+        private void OnRowClearFormula(object sender, RoutedEventArgs e)
         {
+            var row = (sender as FrameworkElement)?.DataContext as FamilyParamRow;
+            if (row == null) return;
+
             var families = FamilyChecks.Where(f => f.IsChecked).Select(f => f.Name).ToList();
             if (families.Count == 0)
             {
@@ -509,23 +515,13 @@ namespace GrdRevit.Ui
                 return;
             }
 
-            var dialog = new InputDialog
-            {
-                Owner = this,
-                Title = "Снять формулу (" + families.Count + " семейств)",
-                Prompt = "Введите имя параметра, у которого нужно снять формулу. Оно будет " +
-                         "убрано у всех типов отмеченных семейств, после чего семейства перезагрузятся в проект."
-            };
-
-            if (dialog.ShowDialog() != true) return;
-            var paramName = dialog.Value?.Trim();
-            if (string.IsNullOrEmpty(paramName)) return;
-
+            var famWord = families.Count == 1 ? "семейства «" + row.Name + "»" : "отмеченных семейств";
             var answer = MessageBox.Show(
                 "Будет отредактировано само СЕМЕЙСТВО (как через «Редактировать семейство»): " +
-                "у параметра «" + paramName + "» формула уберётся у всех типов " + families.Count +
-                " отмеченных семейств, после чего они перезагрузятся в проект.\n\n" +
-                "Это затронет ВСЕ экземпляры этих семейств в проекте. Продолжить?",
+                "у параметра «" + row.Name + "» формула уберётся у всех типов " + famWord + ",\n" +
+                "после чего " + (families.Count == 1 ? "семейство" : "они") + " перезагрузятся в проект.\n\n" +
+                "Это затронет ВСЕ экземпляры " +
+                (families.Count == 1 ? "этого семейства" : "этих семейств") + " в проекте. Продолжить?",
                 "Снять формулу", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
             if (answer != MessageBoxResult.OK) return;
 
@@ -540,13 +536,13 @@ namespace GrdRevit.Ui
                     return;
                 }
 
-                GrdLog.Log("OnClearFormula: семейств=" + families.Count + ", параметр='" + paramName + "'");
-                handler.QueueClearFormula(families, paramName, ShowResult);
+                GrdLog.Log("OnRowClearFormula: семейств=" + families.Count + ", параметр='" + row.Name + "'");
+                handler.QueueClearFormula(families, row.Name, ShowResult);
                 ev.Raise();
             }
             catch (Exception ex)
             {
-                GrdLog.Log("OnClearFormula: EXCEPTION " + ex);
+                GrdLog.Log("OnRowClearFormula: EXCEPTION " + ex);
                 MessageBox.Show("Ошибка: " + ex.Message, "Параметры семейств",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }

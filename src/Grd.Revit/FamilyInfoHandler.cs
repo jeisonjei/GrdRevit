@@ -44,6 +44,9 @@ namespace GrdRevit.Revit
         /// добавлен на уровне проекта («Управление параметрами проекта» в основном окне
         /// Revit): привязан к категории семейства в этом документе, но не вшит в RFA.</summary>
         public bool IsInFamily = true;
+        /// <summary>Значение параметра определяется формулой в семействе
+        /// (хотя бы у одного типа).</summary>
+        public bool HasFormula;
     }
 
     /// <summary>
@@ -264,7 +267,8 @@ namespace GrdRevit.Revit
                                 IsInstance = fp.IsInstance,
                                 StorageType = DescribeType(fp.Definition),
                                 Group = GroupName(fp.Definition),
-                                Guid = fp.IsShared ? fp.GUID.ToString() : string.Empty
+                                Guid = fp.IsShared ? fp.GUID.ToString() : string.Empty,
+                                HasFormula = HasFormulaIn(fm, fp)
                             });
                         }
                     }
@@ -317,7 +321,22 @@ namespace GrdRevit.Revit
                         break;
                     }
                 }
-                if (inAll) result.Add(candidate);
+                if (inAll)
+                {
+                    // Формула может быть не у всех семейств — подсвечиваем, если есть
+                    // хотя бы у одного отмеченного.
+                    foreach (var other in lists.Skip(1))
+                    {
+                        var match = other.FirstOrDefault(p =>
+                            string.Equals(p.Name, candidate.Name, StringComparison.OrdinalIgnoreCase));
+                        if (match != null && match.HasFormula)
+                        {
+                            candidate.HasFormula = true;
+                            break;
+                        }
+                    }
+                    result.Add(candidate);
+                }
             }
             GrdLog.Log("FamilyInfoHandler: общих для всех параметров=" + result.Count + ": " + JoinNames(result));
             return result;
@@ -329,6 +348,36 @@ namespace GrdRevit.Revit
             var names = list.Select(p => p.Name).Where(n => !string.IsNullOrEmpty(n)).ToList();
             if (names.Count > max) return string.Join("; ", names.Take(max)) + "; …(" + names.Count + ")";
             return string.Join("; ", names);
+        }
+
+        /// <summary>Есть ли у параметра формула (значение определяется формулой) хотя бы
+        /// у одного типа семейства. Формула — атрибут типа, поэтому проверяем по всем
+        /// типам через FamilyManager.CurrentType (как при снятии формулы).</summary>
+        private static bool HasFormulaIn(FamilyManager fm, FamilyParameter fp)
+        {
+            try
+            {
+                if (fm == null || fp == null) return false;
+                var types = fm.Types;
+                if (types == null) return fp.IsDeterminedByFormula;
+                bool any = false;
+                foreach (FamilyType type in types)
+                {
+                    if (type == null) continue;
+                    any = true;
+                    try
+                    {
+                        fm.CurrentType = type;
+                        if (fp.IsDeterminedByFormula) return true;
+                    }
+                    catch { }
+                }
+                return !any && fp.IsDeterminedByFormula;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>

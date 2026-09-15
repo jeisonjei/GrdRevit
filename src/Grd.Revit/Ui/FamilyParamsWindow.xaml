@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Параметры семейств"
-        Width="1020" Height="700"
+        Width="1120" Height="700"
         WindowStartupLocation="CenterOwner">
     <Window.Resources>
         <ResourceDictionary>
@@ -19,13 +19,11 @@
                     <Button Content="Добавить обычный параметр" Click="OnAddFamilyParam" Padding="8,3"/>
                     <Button Content="Добавить общий параметр…" Click="OnAddSharedParam" Margin="6,0,0,0" Padding="8,3"/>
                     <Button Content="Удалить выбранные строки" Click="OnRemoveOps" Margin="6,0,0,0" Padding="8,3"/>
-                    <Button Content="Снять формулу…" Click="OnClearFormula" Margin="6,0,0,0" Padding="8,3"
-                        ToolTip="Убирает формулу у параметра во всех отмеченных семействах (всех типов) перед сменой привязки «экземпляр ↔ тип»."/>
                     <Button Content="Проверить…" Click="OnVerify" Margin="6,0,0,0" Padding="8,3"
                             ToolTip="Сверяет по каждому отмеченному семейству фактическое наличие параметров (строк таблицы): и в диспетчере параметров семейства, и на типе в проекте. Помогает отличить «параметр не добавился» от «добавился, но не показан в списке» — при нескольких семействах список справа показывает только общие для всех."/>
                     <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
                                Foreground="{StaticResource TextSecondaryBrush}"
-                               Text="«Общий» = общий (shared) параметр из файла; «Семейный» = обычный параметр семейства. «Изменить привязку» = переключить экземпляр↔тип."/>
+                               Text="«Общий» = общий (shared) параметр из файла; «Семейный» = обычный параметр семейства. «Изменить привязку» = переключить экземпляр↔тип. Розовая подсветка строки = у параметра стоит формула (кнопка «снять формулу» в строке)."/>
                 </StackPanel>
                 <DataGrid x:Name="OpsGrid"
                           ItemsSource="{Binding Ops}"
@@ -205,21 +203,51 @@
                               CanUserAddRows="False" CanUserDeleteRows="False"
                               HeadersVisibility="Column"
                               SelectionMode="Single"
-                              GridLinesVisibility="Horizontal">
+                              GridLinesVisibility="Horizontal"
+                              RowHeight="56">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasFormula}" Value="True">
+                                        <Setter Property="Background" Value="#FDE9E5"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Имя" Binding="{Binding Name}" Width="2*"/>
                             <DataGridTextColumn Header="Тип" Binding="{Binding StorageType}" Width="1*"/>
                             <DataGridTextColumn Header="Группа" Binding="{Binding Group}" Width="1*"/>
                             <DataGridTextColumn Header="Привязка" Binding="{Binding BindingText}" Width="80" CanUserResize="False"/>
-                            <DataGridTemplateColumn Header="Действия" Width="214" CanUserResize="False">
+                            <DataGridTemplateColumn Header="Действия" Width="228" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Button Content="Удалить" Click="OnRowRemove" Padding="8,1" Width="54"/>
-                                            <Button Content="Изменить" Click="OnRowChangeBinding" Margin="4,0,0,0" Padding="8,1" Width="62"/>
-                                            <Button Content="В семейство" Click="OnMoveToFamily" Margin="4,0,0,0" Padding="8,1" Width="80"
-                                                    IsEnabled="{Binding Movable}"
-                                                    ToolTip="Вшить общий параметр в семейство, чтобы он был частью RFA и не зависел от параметров этого проекта. Доступно для общих параметров, добавленных на уровне проекта («Управление параметрами проекта»), — их нет в самом семействе."/>
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Content="Удалить" Click="OnRowRemove" Padding="8,1" Width="56"/>
+                                                <Button Content="Изменить" Click="OnRowChangeBinding" Margin="4,0,0,0" Padding="8,1" Width="64"/>
+                                                <Button Content="В семейство" Click="OnMoveToFamily" Margin="4,0,0,0" Padding="8,1" Width="88"
+                                                        IsEnabled="{Binding Movable}"
+                                                        ToolTip="Вшить общий параметр в семейство, чтобы он был частью RFA и не зависел от параметров этого проекта. Доступно для общих параметров, добавленных на уровне проекта («Управление параметрами проекта»), — их нет в самом семействе."/>
+                                            </StackPanel>
+                                            <Button Click="OnRowClearFormula" Margin="0,4,0,0" Padding="8,1" FontSize="11"
+                                                    HorizontalContentAlignment="Left"
+                                                    ToolTip="Снять формулу у параметра семейства во всех отмеченных семействах: формула убирается у всех типов, затем семейства перезагрузятся в проект (затронет все экземпляры).">
+                                                <Button.Style>
+                                                    <Style TargetType="Button">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasFormula}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="✎" Margin="0,0,4,0"/>
+                                                    <TextBlock Text="снять формулу"/>
+                                                </StackPanel>
+                                            </Button>
                                         </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
