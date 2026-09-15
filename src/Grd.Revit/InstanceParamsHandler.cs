@@ -228,13 +228,14 @@ namespace GrdRevit.Revit
             foreach (var el in elements)
             {
                 var seen = new HashSet<string>(StringComparer.Ordinal);
+                bool isNestedEl = IsNestedComponent(el);
                 foreach (var p in SafeOrderedParameters(el, instance: true))
-                    AddParam(agg, seen, p, isInstance: true, doc, verbose);
+                    AddParam(agg, seen, p, isInstance: true, isNested: isNestedEl, doc: doc, verbose: verbose);
                 var fi = el as FamilyInstance;
                 if (fi?.Symbol != null)
                 {
                     foreach (var p in SafeOrderedParameters(fi.Symbol, instance: false))
-                        AddParam(agg, seen, p, isInstance: false, doc, verbose);
+                        AddParam(agg, seen, p, isInstance: false, isNested: false, doc: doc, verbose: verbose);
                 }
             }
 
@@ -312,7 +313,7 @@ namespace GrdRevit.Revit
             return el.Id?.ToString() ?? string.Empty;
         }
 
-        private static void AddParam(Dictionary<string, ElementParamValue> agg, HashSet<string> seen, Parameter p, bool isInstance, Document doc, bool verbose)
+        private static void AddParam(Dictionary<string, ElementParamValue> agg, HashSet<string> seen, Parameter p, bool isInstance, bool isNested, Document doc, bool verbose)
         {
             if (p?.Definition?.Name == null) return;
 
@@ -334,7 +335,7 @@ namespace GrdRevit.Revit
                 IsInstance = isInstance,
                 StorageType = DescribeStorage(p),
                 Group = FriendlyGroup(p),
-                IsReadOnly = IsReadOnlyParam(p),
+                IsReadOnly = !IsWritable(p, isInstance, isNested),
                 Value = ReadValue(p),
                 MatchCount = 1
             };
@@ -343,7 +344,7 @@ namespace GrdRevit.Revit
             if (agg.TryGetValue(aggKey, out var existing))
             {
                 existing.MatchCount++;
-                if (IsReadOnlyParam(p)) existing.IsReadOnly = true;
+                if (!IsWritable(p, isInstance, isNested)) existing.IsReadOnly = true;
                 if (!existing.Diverse && !string.Equals(existing.Value, row.Value, StringComparison.Ordinal))
                 {
                     existing.Diverse = true;
@@ -454,6 +455,36 @@ namespace GrdRevit.Revit
         private static bool IsReadOnlyParam(Parameter p)
         {
             try { return p.IsReadOnly; } catch { return true; }
+        }
+
+        /// <summary>
+        /// Действительно ли параметр доступен для записи.
+        /// <para>ВАЖНО: общие (shared) параметры ЭКЗЕМПЛЯРА у экземпляров ВЛОЖЕННЫХ
+        /// семейств Revit в проектном документе помечает IsReadOnly=true, хотя в UI они
+        /// редактируются (значение пишется как локальное переопределение экземпляра).
+        /// Поэтому для shared-параметров экземпляра вложенного элемента флагу IsReadOnly
+        /// не доверяем: пробуем записать, а фактический результат сверяем после коммита.
+        /// Параметры, определяемые формулой, остаются недоступными (для них в строке
+        /// доступна кнопка «снять формулу»).</para>
+        /// </summary>
+        private static bool IsWritable(Parameter p, bool isInstance, bool isNested)
+        {
+            if (p == null) return false;
+            if (isInstance && isNested)
+            {
+                bool shared;
+                try { shared = p.GUID != Guid.Empty; } catch { shared = false; }
+                if (shared) return true;
+            }
+            try { return !p.IsReadOnly; } catch { return false; }
+        }
+
+        /// <summary>Элемент — экземпляр ВЛОЖЕННОГО семейства (находится внутри другого
+        /// экземпляра семейства в проекте).</summary>
+        private static bool IsNestedComponent(Element el)
+        {
+            try { return el is FamilyInstance fi && fi.SuperComponent != null; }
+            catch { return false; }
         }
 
         private static bool IsYesNo(Parameter p)
@@ -670,7 +701,7 @@ namespace GrdRevit.Revit
                                " el=\"" + DescribeElement(el) + "\"");
                     return resRec;
                 }
-                if (IsReadOnlyParam(p))
+                if (!IsWritable(p, edit.IsInstance, IsNestedComponent(el)))
                 {
                     resRec.Ok = false;
                     resRec.Reason = "параметр доступен только для чтения";
@@ -723,10 +754,11 @@ namespace GrdRevit.Revit
         private static Parameter FindWritableParam(Element el, string name, bool isInstance, out Element target)
         {
             target = isInstance ? el : (el as FamilyInstance)?.Symbol;
+            bool isNested = IsNestedComponent(el);
             Parameter p = null;
             try { p = target?.LookupParameter(name); } catch { }
 
-            if (p == null || IsReadOnlyParam(p))
+            if (p == null || !IsWritable(p, isInstance, isNested))
             {
                 var alternate = isInstance ? (el as FamilyInstance)?.Symbol : el;
                 if (alternate != null && alternate != target)
@@ -734,7 +766,7 @@ namespace GrdRevit.Revit
                     try
                     {
                         var alt = alternate.LookupParameter(name);
-                        if (alt != null && !IsReadOnlyParam(alt))
+                        if (alt != null && IsWritable(alt, isInstance, isNested))
                         {
                             target = alternate;
                             p = alt;
@@ -996,7 +1028,7 @@ namespace GrdRevit.Revit
 
         private static bool TryWrite(Parameter p, string newValue)
         {
-            if (p == null || IsReadOnlyParam(p)) return false;
+            if (p == null) return false;
 
             // Текстовое значение в формате отображения (с единицами измерения) — самый
             // естественный путь: пользователь правит то, что видит в ячейке.
