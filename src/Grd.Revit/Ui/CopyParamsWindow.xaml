@@ -1,0 +1,256 @@
+<Window x:Class="GrdRevit.Ui.CopyParamsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Скопировать параметры"
+        Width="1280" Height="760"
+        MinWidth="980" MinHeight="560"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <GroupBox DockPanel.Dock="Bottom" Header="Копирование" Margin="0,8,0,0" Padding="6">
+            <StackPanel>
+                <TextBlock Text="Отметьте галками параметры в таблице источника, выберите семейство-источник и целевое семейство, затем нажмите «Скопировать». Отсутствующие в целевом семействе параметры будут добавлены с такой же привязкой (экземпляр/тип); при иной привязке она будет заменена; значения типовых параметров копируются одноимённым типам."
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="ApplyButton" Content="Скопировать отмеченные параметры" Click="OnApply"
+                            Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
+                    <Button Content="Обновить семейства" Click="OnRefreshFamilies" Margin="8,0,0,0" Padding="12,5"
+                            ToolTip="Перечитать список семейств активного документа (и из выборки/спецификации, если включена галочка)"/>
+                    <TextBlock x:Name="ApplyCount" VerticalAlignment="Center" Margin="14,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <TextBlock x:Name="ApplyStatus" Margin="2,6,0,0" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+        </GroupBox>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="1.35*"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ===== Семейство-источник ===== -->
+            <GroupBox Grid.Row="0" Grid.Column="0" Header="Семейство-источник" Padding="4" Margin="0,0,4,6">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <CheckBox x:Name="SourceScopeBox" Content="Только выбранные / спецификация" VerticalAlignment="Center"
+                                  Checked="OnSourceScopeChanged" Unchecked="OnSourceScopeChanged"
+                                  ToolTip="Показывать в этом списке только семейства из активной спецификации или из выделения в Revit. Действует только на список источника."/>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Тип:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <ComboBox x:Name="SourceTypeCombo" Width="220" Padding="2,1" SelectionChanged="OnSourceTypeChanged"
+                                      ToolTip="Тип семейства-источника, из которого берутся значения типовых параметров. «все типы» — копирование по совпадающим именам типов."/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBox x:Name="SourceFamFilter" Width="180" Padding="4,3" TextChanged="OnSourceFamFilterChanged"/>
+                            <Button Content="Сбросить" Click="OnSourceFamFilterReset" Margin="6,0,0,0" Padding="8,2"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <ListBox x:Name="SourceFamList" SelectionChanged="OnSourceFamSelected"
+                             ItemsSource="{Binding SourceFamilies}"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Margin="2,0"/>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </GroupBox>
+
+            <!-- ===== Целевое семейство ===== -->
+            <GroupBox Grid.Row="0" Grid.Column="1" Header="Целевое семейство" Padding="4" Margin="4,0,0,6">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <CheckBox x:Name="TargetScopeBox" Content="Только выбранные / спецификация" VerticalAlignment="Center"
+                                  Checked="OnTargetScopeChanged" Unchecked="OnTargetScopeChanged"
+                                  ToolTip="Показывать в этом списке только семейства из активной спецификации или из выделения в Revit. Действует только на целевой список."/>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Тип:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <ComboBox x:Name="TargetTypeCombo" Width="220" Padding="2,1" SelectionChanged="OnTargetTypeChanged"
+                                      ToolTip="Тип целевого семейства, в который записываются значения типовых параметров. «все типы» — копирование по совпадающим именам типов."/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBox x:Name="TargetFamFilter" Width="180" Padding="4,3" TextChanged="OnTargetFamFilterChanged"/>
+                            <Button Content="Сбросить" Click="OnTargetFamFilterReset" Margin="6,0,0,0" Padding="8,2"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <ListBox x:Name="TargetFamList" SelectionChanged="OnTargetFamSelected"
+                             ItemsSource="{Binding TargetFamilies}"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Margin="2,0"/>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </GroupBox>
+
+            <!-- ===== Параметры источника ===== -->
+            <GroupBox Grid.Row="1" Grid.Column="0" Header="Параметры источника (отметить для копирования)" Padding="4" Margin="0,0,4,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Все" Click="OnSelectAllParams" Padding="8,2"/>
+                            <Button Content="Снять все" Click="OnSelectNoneParams" Margin="6,0,0,0" Padding="8,2"/>
+                            <TextBlock x:Name="SrcCount" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBox x:Name="SourceParamFilter" Width="200" Padding="4,3" TextChanged="OnSourceParamFilterChanged"/>
+                            <Button Content="Сбросить" Click="OnSourceParamFilterReset" Margin="6,0,0,0" Padding="8,2"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <DataGrid x:Name="SourceGrid"
+                              ItemsSource="{Binding SourceParams}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserAddRows="False" CanUserDeleteRows="False"
+                              HeadersVisibility="Column"
+                              SelectionMode="Single"
+                              GridLinesVisibility="All">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="✓" Width="34" CanUserResize="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Click="OnParamChecked"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Имя" Binding="{Binding Name}" Width="1.6*"/>
+                            <DataGridTextColumn Header="Тип" Binding="{Binding StorageType}" Width="70" CanUserResize="False"/>
+                            <DataGridTextColumn Header="Группа" Binding="{Binding Group}" Width="1*"/>
+                            <DataGridTemplateColumn Header="Привязка" Width="74" CanUserResize="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" Margin="4,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="тип"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsInstance}" Value="True">
+                                                            <Setter Property="Text" Value="экземпляр"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Значение" Binding="{Binding Value}" Width="1.4*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </GroupBox>
+
+            <!-- ===== Параметры целевого семейства ===== -->
+            <GroupBox Grid.Row="1" Grid.Column="1" Header="Параметры целевого семейства" Padding="4" Margin="4,0,0,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBox x:Name="TargetParamFilter" Width="200" Padding="4,3" TextChanged="OnTargetParamFilterChanged"/>
+                            <Button Content="Сбросить" Click="OnTargetParamFilterReset" Margin="6,0,0,0" Padding="8,2"/>
+                            <TextBlock Margin="14,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Text="Розовая строка = формула (кнопка «снять формулу»)."/>
+                        </StackPanel>
+                    </StackPanel>
+                    <DataGrid x:Name="TargetGrid"
+                              ItemsSource="{Binding TargetParams}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserAddRows="False" CanUserDeleteRows="False"
+                              HeadersVisibility="Column"
+                              SelectionMode="Single"
+                              GridLinesVisibility="All">
+                        <DataGrid.Resources>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasFormula}" Value="True">
+                                        <Setter Property="Background" Value="#FDE9E5"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Имя" Binding="{Binding Name}" Width="1.6*"/>
+                            <DataGridTextColumn Header="Тип" Binding="{Binding StorageType}" Width="70" CanUserResize="False"/>
+                            <DataGridTextColumn Header="Группа" Binding="{Binding Group}" Width="1*"/>
+                            <DataGridTemplateColumn Header="Привязка" Width="74" CanUserResize="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" Margin="4,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="тип"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsInstance}" Value="True">
+                                                            <Setter Property="Text" Value="экземпляр"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Значение" Binding="{Binding Value}" Width="1.4*"/>
+                            <DataGridTemplateColumn Header="Действия" Width="128" CanUserResize="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Click="OnClearFormulaClick" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                Margin="6,0" Padding="8,2" FontSize="11"
+                                                ToolTip="Снять формулу у параметра (все типы): семейство будет отредактировано и перезагружено в проект — иначе значение пересчитывается и копирование не сработает.">
+                                            <Button.Style>
+                                                <Style TargetType="Button">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasFormula}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="✎" Margin="0,0,4,0"/>
+                                                <TextBlock Text="снять формулу"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </GroupBox>
+        </Grid>
+    </DockPanel>
+</Window>

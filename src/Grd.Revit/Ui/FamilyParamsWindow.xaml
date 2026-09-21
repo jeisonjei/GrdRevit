@@ -31,9 +31,9 @@
                           CanUserAddRows="True" CanUserDeleteRows="True"
                           HeadersVisibility="Column"
                           MinHeight="120" MaxHeight="260"
-                          GridLinesVisibility="Horizontal">
+                          GridLinesVisibility="All">
                     <DataGrid.Resources>
-                        <Style TargetType="DataGridColumnHeader">
+                        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DataGridColumnHeaderBase}">
                             <Setter Property="ContentTemplate">
                                 <Setter.Value>
                                     <DataTemplate>
@@ -49,17 +49,12 @@
                         </Style>
                     </DataGrid.Resources>
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="Общий" Width="64" CanUserResize="False">
+                        <DataGridTemplateColumn Header="Общий" Width="64" CanUserResize="False" IsReadOnly="True">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsShared}" IsHitTestVisible="False" HorizontalAlignment="Center"/>
+                                    <CheckBox IsChecked="{Binding IsShared, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
-                            <DataGridTemplateColumn.CellEditingTemplate>
-                                <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsShared, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" Margin="8,0"/>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="Операция" Width="96">
                             <DataGridTemplateColumn.CellTemplate>
@@ -103,17 +98,12 @@
                                 </Style>
                             </DataGridTextColumn.ElementStyle>
                         </DataGridTextColumn>
-                        <DataGridTemplateColumn Header="Экземпляр" Width="92" CanUserResize="False">
+                        <DataGridTemplateColumn Header="Экземпляр" Width="92" CanUserResize="False" IsReadOnly="True">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsInstance}" IsHitTestVisible="False" HorizontalAlignment="Center"/>
+                                    <CheckBox IsChecked="{Binding IsInstance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
-                            <DataGridTemplateColumn.CellEditingTemplate>
-                                <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsInstance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" Margin="8,0"/>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
@@ -125,10 +115,15 @@
                 <TextBlock Text="Выберите семейства (слева) и задайте параметры выше, затем нажмите «Применить». Каждое семейство редактируется и загружается обратно в документ."
                            TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,2,0,0">
-                    <Button Content="Применить к выбранным семействам" Click="OnApply"
+                    <Button x:Name="ApplyButton" Content="Применить к выбранным семействам" Click="OnApply"
                             Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
                     <Button Content="Загрузить файл общих параметров..." Click="OnLoadSharedFile" Margin="8,0,0,0" Padding="12,5"/>
                     <TextBlock x:Name="SharedFileInfo" VerticalAlignment="Center" Margin="12,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <StackPanel x:Name="ApplyProgressPanel" Visibility="Collapsed" Margin="0,8,0,0">
+                    <ProgressBar x:Name="ApplyProgressBar" Height="10" Minimum="0" Maximum="100"/>
+                    <TextBlock x:Name="ApplyProgressText" Margin="2,4,0,0" TextWrapping="Wrap"
                                Foreground="{StaticResource TextSecondaryBrush}"/>
                 </StackPanel>
             </StackPanel>
@@ -203,7 +198,7 @@
                               CanUserAddRows="False" CanUserDeleteRows="False"
                               HeadersVisibility="Column"
                               SelectionMode="Single"
-                              GridLinesVisibility="Horizontal"
+                              GridLinesVisibility="All"
                               RowHeight="56">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">

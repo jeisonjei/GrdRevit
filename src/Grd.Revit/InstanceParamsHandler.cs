@@ -112,14 +112,14 @@ namespace GrdRevit.Revit
             }
         }
 
-        public void QueueClearFormula(ElementId elementId, string paramName, bool isInstance, Action<InstanceParamsResult> callback)
+        public void QueueClearFormula(List<ElementId> elementIds, string paramName, bool isInstance, Action<InstanceParamsResult> callback)
         {
             lock (_sync)
             {
                 _requests.Enqueue(new Request
                 {
                     Kind = Kind.ClearFormula,
-                    ElementIds = new List<ElementId> { elementId },
+                    ElementIds = new List<ElementId>(elementIds ?? new List<ElementId>()),
                     ClearName = paramName ?? string.Empty,
                     ClearIsInstance = isInstance,
                     ApplyCallback = callback
@@ -156,8 +156,7 @@ namespace GrdRevit.Revit
                     }
                     else if (req.Kind == Kind.ClearFormula)
                     {
-                        var single = req.ElementIds.Count > 0 ? req.ElementIds[0] : ElementId.InvalidElementId;
-                        req.ApplyCallback?.Invoke(ClearFormula(app, single, req.ClearName, req.ClearIsInstance));
+                        req.ApplyCallback?.Invoke(ClearFormula(app, req.ElementIds, req.ClearName, req.ClearIsInstance));
                     }
                     else
                     {
@@ -779,12 +778,15 @@ namespace GrdRevit.Revit
         }
 
         /// <summary>
-        /// Снимает формулу с параметра, редактируя САМО СЕМЕЙСТВО через его документ
+        /// Снимает формулу с параметра, редактируя САМИ СЕМЕЙСТВА через их документы
         /// (Document.EditFamily) — так же, как окно «Редактировать семейство», но без
-        /// открытия UI. Формула убирается у ВСЕХ типов семейства, после чего семейство
-        /// перезагружается в проект (затрагивает все экземпляры этого семейства).
+        /// открытия UI. Обрабатываются ВСЕ выбранные экземпляры: экземпляры одного
+        /// семейства группируются; семейства, где параметр уже редактируем или
+        /// отсутствует, пропускаются без ошибок. Формула убирается у всех типов
+        /// каждого семейства, после чего семейства перезагружаются в проект
+        /// (затрагивает все экземпляры этих семейств).
         /// </summary>
-        private static InstanceParamsResult ClearFormula(UIApplication app, ElementId elementId, string paramName, bool isInstance)
+        private static InstanceParamsResult ClearFormula(UIApplication app, List<ElementId> elementIds, string paramName, bool isInstance)
         {
             var res = new InstanceParamsResult();
             var doc = app?.ActiveUIDocument?.Document;
@@ -793,13 +795,80 @@ namespace GrdRevit.Revit
                 res.Errors.Add("Нет активного документа Revit.");
                 return res;
             }
+            if (elementIds == null || elementIds.Count == 0)
+            {
+                res.Errors.Add("Нет выбранных элементов.");
+                return res;
+            }
 
+            // Группируем экземпляры по ИМЕНИ семейства (ссылки Family после LoadFamily
+            // становятся недействительными, поэтому храним только ElementId).
+            var families = new SortedDictionary<string, ElementId>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in elementIds)
+            {
+                try
+                {
+                    var el = doc.GetElement(id) as FamilyInstance;
+                    var family = el?.Symbol?.Family;
+                    var name = family?.Name;
+                    if (family == null || string.IsNullOrEmpty(name))
+                    {
+                        res.Errors.Add("Элемент (id=" + id.ToString() + ") не является экземпляром семейства.");
+                        continue;
+                    }
+                    if (family.IsInPlace)
+                    {
+                        res.Errors.Add("Семейство «" + name + "» — встроенное (in-place): для него нет файла семейства, формула не снимается.");
+                        continue;
+                    }
+                    if (!family.IsEditable)
+                    {
+                        res.Errors.Add("Семейство «" + name + "» недоступно для редактирования.");
+                        continue;
+                    }
+                    if (!families.ContainsKey(name)) families[name] = id;
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("InstanceParamsHandler.ClearFormula: id=" + id.ToString() + " EXCEPTION " + ex.Message);
+                }
+            }
+            if (families.Count == 0) return res;
+
+            int skipped = 0;
+            foreach (var kv in families)
+            {
+                // Семейства, где параметр редактируем или отсутствует, пропускаем тихо:
+                // снимать формулу там нечего, ошибками заваливать не нужно.
+                bool paramReadOnly = false;
+                try
+                {
+                    var el = doc.GetElement(kv.Value) as FamilyInstance;
+                    Element target = isInstance ? (Element)el : el?.Symbol;
+                    var probe = target?.LookupParameter(paramName);
+                    paramReadOnly = probe != null && IsReadOnlyParam(probe);
+                }
+                catch { }
+                if (!paramReadOnly) { skipped++; continue; }
+
+                if (ClearFormulaForFamily(app, doc, kv.Value, paramName, res))
+                    res.Applied++;
+            }
+            res.Total = families.Count - skipped;
+
+            GrdLog.Log("InstanceParamsHandler.ClearFormula: семейств=" + families.Count +
+                       ", применено=" + res.Applied + ", пропущено=" + skipped + ", ошибок=" + res.Errors.Count);
+            return res;
+        }
+
+        private static bool ClearFormulaForFamily(UIApplication app, Document doc, ElementId elementId, string paramName, InstanceParamsResult res)
+        {
             Element el = null;
             try { el = doc.GetElement(elementId); } catch { }
             if (el == null)
             {
                 res.Errors.Add("Выбранный элемент не найден в документе.");
-                return res;
+                return false;
             }
 
             var fi = el as FamilyInstance;
@@ -807,7 +876,7 @@ namespace GrdRevit.Revit
             if (family == null)
             {
                 res.Errors.Add("Снять формулу можно только у экземпляра семейства.");
-                return res;
+                return false;
             }
             // Сохраняем имя семейства ДО перезагрузки: после LoadFamily старые ссылки
             // на элементы проекта (в т.ч. Family) становятся недействительными,
@@ -816,15 +885,14 @@ namespace GrdRevit.Revit
             if (family.IsInPlace)
             {
                 res.Errors.Add("Семейство «" + familyName + "» — встроенное (in-place): для него нет файла семейства, формула не снимается.");
-                return res;
+                return false;
             }
             if (!family.IsEditable)
             {
                 res.Errors.Add("Семейство «" + familyName + "» недоступно для редактирования.");
-                return res;
+                return false;
             }
 
-            res.Total = 1;
             string tempPath = null;
             Document famDoc = null;
             try
@@ -864,7 +932,7 @@ namespace GrdRevit.Revit
                                    "из проекта (общий параметр проекта/свойство), в семействе формулы нет, " +
                                    "и редактировать его можно только на уровне самого проекта.");
                     GrdLog.Log("ClearFormula: cleared=0 — параметр не определён формулой ни у одного типа");
-                    return res;
+                    return false;
                 }
 
                 // ВАЖНО (тот же паттерн, что в FamilyParamsHandler): имя временного
@@ -906,7 +974,7 @@ namespace GrdRevit.Revit
                 {
                     res.Errors.Add("Семейство «" + familyName + "» не перезагрузилось — снять формулу не удалось.");
                     GrdLog.Log("ClearFormula: LoadFamily вернул false — перезагрузка не удалась");
-                    return res;
+                    return false;
                 }
                 GrdLog.Log("ClearFormula: перезагрузка успешна (loadedFamily=" + loadedFamily.Name + ")");
 
@@ -974,11 +1042,11 @@ namespace GrdRevit.Revit
                 {
                     res.Errors.Add("Параметр «" + paramName + "» в семействе «" + familyName +
                                    "» остался доступен только для чтения — формула не снята.");
-                    return res;
+                    return false;
                 }
 
-                res.Applied = 1;
                 res.Changed.Add(paramName + ": формула снята у семейства «" + familyName + "» (все типы)");
+                return true;
             }
             catch (Exception ex)
             {
@@ -994,9 +1062,8 @@ namespace GrdRevit.Revit
                 }
             }
 
-            GrdLog.Log("InstanceParamsHandler.ClearFormula: «" + paramName + "» applied=" + res.Applied +
-                       ", errors=" + res.Errors.Count);
-            return res;
+            GrdLog.Log("ClearFormulaForFamily: «" + familyName + "» параметр «" + paramName + "» завершено");
+            return false;
         }
 
         /// <summary>Имя временного RFA-файла = имя семейства (+.rfa), с заменой

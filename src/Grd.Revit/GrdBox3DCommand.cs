@@ -6,6 +6,8 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.Exceptions;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
+using GrdRevit.Revit;
+using GrdRevit.Ui;
 
 namespace GrdRevit
 {
@@ -13,6 +15,8 @@ namespace GrdRevit
     /// «3D-фрагмент»: пользователь растягивает прямоугольную область на плане (PickBox),
     /// создаётся изометрический 3D-вид с границами точно по этой области и высотой
     /// по умолчанию из настроек плагина (Default3DBoxHeight, метры).
+    /// На вид применяется последний выбранный шаблон 3D-вида (Settings.Last3DTemplateName);
+    /// при первом запуске предлагается выбрать его.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
@@ -110,9 +114,30 @@ namespace GrdRevit
                     t.Commit();
                 }
 
+                // Применить последний шаблон 3D-вида (или дать выбрать в первый раз).
+                var template = PickTemplate(doc);
+                if (template != null)
+                {
+                    using (var t = new Transaction(doc, "Применить шаблон к 3D-виду-фрагменту"))
+                    {
+                        t.Start();
+                        view3d.ViewTemplateId = new ElementId(template.Id);
+                        // Шаблон мог изменить обрезку — возвращаем границы фрагмента поверх.
+                        view3d.SetSectionBox(new BoundingBoxXYZ
+                        {
+                            Transform = Transform.Identity,
+                            Min = new XYZ(minX, minY, minZ),
+                            Max = new XYZ(maxX, maxY, maxZ)
+                        });
+                        view3d.IsSectionBoxActive = true;
+                        t.Commit();
+                    }
+                }
+
                 uidoc.ActiveView = view3d;
                 GrdLog.Log("GrdBox3DCommand: создан 3D-вид-фрагмент '" + view3d.Name +
-                           "', высота=" + heightM.ToString(System.Globalization.CultureInfo.InvariantCulture) + " м");
+                           "', высота=" + heightM.ToString(System.Globalization.CultureInfo.InvariantCulture) + " м" +
+                           ", шаблон=" + (template?.Name ?? "(без шаблона)"));
                 return Result.Succeeded;
             }
             catch (Exception ex)
@@ -140,6 +165,57 @@ namespace GrdRevit
                 var name = baseName + " (" + i + ")";
                 if (!existing.Contains(name)) return name;
             }
+        }
+
+        /// <summary>Подбор шаблона 3D-вида для нового фрагмента:
+        /// берётся последний применённый (Settings.Last3DTemplateName), при первом
+        /// запуске или если сохранённый шаблон не найден — предлагается выбор.</summary>
+        private static TemplateInfoItem PickTemplate(Document doc)
+        {
+            TemplateInfoItem result = null;
+            try
+            {
+                var templates = Collect3DTemplates(doc);
+                var last = RevitContext.Settings.Last3DTemplateName;
+                if (!string.IsNullOrEmpty(last))
+                    result = templates.FirstOrDefault(
+                        t => string.Equals(t.Name, last, StringComparison.OrdinalIgnoreCase));
+
+                if (result == null && templates.Count > 0)
+                {
+                    var picker = new ViewTemplatesPickerWindow(templates);
+                    try
+                    {
+                        var owner = MainWindow.Instance;
+                        if (owner != null && owner.IsVisible) picker.Owner = owner;
+                    }
+                    catch { }
+                    if (picker.ShowDialog() == true && picker.SelectedTemplate != null)
+                    {
+                        result = picker.SelectedTemplate;
+                        RevitContext.Settings.Last3DTemplateName = result.Name;
+                        RevitContext.SaveSettings();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("GrdBox3DCommand: выбор шаблона пропущен: " + ex.Message);
+            }
+            return result;
+        }
+
+        /// <summary>Все шаблоны 3D-видов текущего документа (View.IsTemplate, ViewFamily.ThreeDimensional).</summary>
+        private static List<TemplateInfoItem> Collect3DTemplates(Document doc)
+        {
+            var list = new List<TemplateInfoItem>();
+            foreach (View v in new FilteredElementCollector(doc).OfClass(typeof(View)).Cast<View>())
+            {
+                if (v == null || !v.IsTemplate || v.ViewType != ViewType.ThreeD) continue;
+                list.Add(new TemplateInfoItem { Id = v.Id.Value, Name = v.Name, KindText = "3D" });
+            }
+            list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
+            return list;
         }
     }
 }

@@ -40,6 +40,9 @@
                     <TextBox x:Name="FilterBox" Width="260" Padding="6,3" TextChanged="OnFilterChanged"
                              ToolTip="Фильтрует список по имени параметра"/>
                     <Button Content="Сбросить" Click="OnFilterReset" Margin="6,0,0,0"/>
+                    <CheckBox Content="Переносить строки ячеек" Margin="12,0,0,0" VerticalAlignment="Center"
+                              IsChecked="{Binding WrapCells, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Переносить длинные значения на несколько строк; высота строки таблицы при этом увеличивается"/>
                     <TextBlock x:Name="CountText" VerticalAlignment="Center" Margin="14,0,0,0"
                                Foreground="{StaticResource TextSecondaryBrush}"/>
                 </StackPanel>
@@ -52,7 +55,7 @@
                       HeadersVisibility="Column"
                       SelectionMode="Single"
                       AlternatingRowBackground="White"
-                      GridLinesVisibility="Horizontal"
+                      GridLinesVisibility="All"
                       PreparingCellForEdit="OnPreparingCellForEdit">
                 <DataGrid.Resources>
                     <Style TargetType="DataGridRow">
@@ -102,28 +105,10 @@
                     <DataGridTemplateColumn Header="Значение" Width="3.4*" CanUserResize="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding DisplayValue}" TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" Margin="6,0"
-                                               ToolTip="{Binding DisplayValue}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsEditable}" Value="False">
-                                                        <Setter Property="Foreground" Value="#A5ADB8"/>
-                                                        <Setter Property="TextDecorations" Value="Strikethrough"/>
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsDiverse}" Value="True">
-                                                        <Setter Property="Foreground" Value="#8A93A0"/>
-                                                        <Setter Property="FontStyle" Value="Italic"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <TextBlock Text="(только чтение)" VerticalAlignment="Center" Margin="6,0,4,0"
-                                               Foreground="#A5ADB8" FontSize="11">
+                                <DockPanel>
+                                    <TextBlock Text="(только чтение)" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="6,0,4,0"
+                                               Foreground="#A5ADB8" FontSize="11"
+                                               ToolTip="Параметр только для чтения — значение определяется формулой в семействе">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed"/>
@@ -135,7 +120,33 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                </StackPanel>
+                                    <TextBlock Text="{Binding DisplayValue}" Margin="6,0"
+                                               ToolTip="{Binding DisplayValue}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                                <Setter Property="TextWrapping" Value="NoWrap"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEditable}" Value="False">
+                                                        <Setter Property="Foreground" Value="#A5ADB8"/>
+                                                        <Setter Property="TextDecorations" Value="Strikethrough"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsDiverse}" Value="True">
+                                                        <Setter Property="Foreground" Value="#8A93A0"/>
+                                                        <Setter Property="FontStyle" Value="Italic"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding WrapCells, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                        <Setter Property="TextWrapping" Value="Wrap"/>
+                                                        <Setter Property="TextTrimming" Value="None"/>
+                                                        <Setter Property="VerticalAlignment" Value="Top"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DockPanel>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                         <DataGridTemplateColumn.CellEditingTemplate>

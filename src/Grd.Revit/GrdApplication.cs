@@ -17,7 +17,11 @@ namespace GrdRevit
         private const string FamilyParamsButtonName = "GrdRevit.FamilyParams";
         private const string Box3DButtonName = "GrdRevit.Box3D";
         private const string InstanceParamsButtonName = "GrdRevit.InstanceParams";
+        private const string CopyParamsButtonName = "GrdRevit.CopyParams";
         private const string ScheduleExportButtonName = "GrdRevit.ScheduleExport";
+        private const string ScheduleSnapshotButtonName = "GrdRevit.ScheduleSnapshot";
+        private const string PdfPrintButtonName = "GrdRevit.PdfPrint";
+        private const string DwgExportButtonName = "GrdRevit.DwgExport";
         private const string SettingsButtonName = "GrdRevit.Settings";
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
 
@@ -104,6 +108,24 @@ namespace GrdRevit
 
                 panel.AddItem(instanceData);
 
+                var copyData = new PushButtonData(
+                    CopyParamsButtonName,
+                    "Скопировать\nпараметры",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdCopyParamsCommand).FullName)
+                {
+                    ToolTip = "Перенести параметры (и значения типов) из одного семейства в другое без открытия редактора семейства",
+                    LongDescription = "Выберите семейство-источник и целевое семейство (с поиском и режимом «выбранные/спецификация»). " +
+                                      "Отметьте параметры слева и нажмите «Скопировать»: отсутствующие в целевом семействе параметры " +
+                                      "добавляются с такой же привязкой (экземпляр/тип), при иной привязке — заменяются, значения " +
+                                      "одноимённых типов копируются. Параметры целевого с формулами подсвечиваются и имеют кнопку «снять формулу»."
+                };
+                copyData.Image = LoadIcon("GrdRevit.Resources.copyparams16.png");
+                copyData.LargeImage = LoadIcon("GrdRevit.Resources.copyparams32.png");
+                copyData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(copyData);
+
                 var viewsData = new PushButtonData(
                     ViewsManagerButtonName,
                     "Управляющий\nвидами",
@@ -139,6 +161,59 @@ namespace GrdRevit
                 scheduleData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(scheduleData);
+
+                var snapData = new PushButtonData(
+                    ScheduleSnapshotButtonName,
+                    "Снимок\nспецификаций",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdScheduleSnapshotCommand).FullName)
+                {
+                    ToolTip = "Спецификации с листов в редактируемой таблице: правки, возврат к виду из модели, печать в PDF",
+                    LongDescription = "Открывает окно: слева — листы проекта со спецификациями (поиск по номеру/имени листа и имени " +
+                                      "спецификации), справа — выбранная спецификация в редактируемой таблице. " +
+                                      "Правки хранятся только в окне и не попадают в модель; «Обновить из модели» возвращает " +
+                                      "марки, наименования и количество к исходному виду; «Печать в PDF» сохраняет таблицу (с правками) в PDF."
+                };
+                snapData.Image = LoadIcon("GrdRevit.Resources.schedulesnap16.png");
+                snapData.LargeImage = LoadIcon("GrdRevit.Resources.schedulesnap32.png");
+                snapData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(snapData);
+
+                var pdfPrintData = new PushButtonData(
+                    PdfPrintButtonName,
+                    "Печать\nв PDF",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdPdfPrintCommand).FullName)
+                {
+                    ToolTip = "Сохранить выбранные листы в один PDF: размер страницы подбирается по каждому листу",
+                    LongDescription = "Открывает окно со списком всех листов проекта (поиск, галочки). " +
+                                      "Отмеченные листы сохраняются в один PDF-файл; размер страницы берётся из каждого листа. " +
+                                      "Векторный вывод компактнее, растровый — надёжно передаёт знак «Ø», если векторное ядро его искажает."
+                };
+                pdfPrintData.Image = LoadIcon("GrdRevit.Resources.schedulesnap16.png");
+                pdfPrintData.LargeImage = LoadIcon("GrdRevit.Resources.schedulesnap32.png");
+                pdfPrintData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(pdfPrintData);
+
+                var dwgExportData = new PushButtonData(
+                    DwgExportButtonName,
+                    "Экспорт\nв DWG",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdDwgExportCommand).FullName)
+                {
+                    ToolTip = "Сохранить выбранные листы в один DWG: каждый лист становится отдельным layout",
+                    LongDescription = "Открывает окно со списком всех листов проекта (поиск, галочки, избранное ★). " +
+                                      "Отмеченные листы экспортируются в один DWG-файл (MergedViews), каждый лист — " +
+                                      "отдельный layout. Избранные листы общие с окном «Печать в PDF» и запоминаются " +
+                                      "по документу; путь сохранения запоминается."
+                };
+                dwgExportData.Image = LoadIcon("GrdRevit.Resources.schedule16.png");
+                dwgExportData.LargeImage = LoadIcon("GrdRevit.Resources.schedule32.png");
+                dwgExportData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(dwgExportData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,

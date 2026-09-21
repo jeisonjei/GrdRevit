@@ -60,10 +60,10 @@ namespace GrdRevit.Ui
             ? Value.Length > 0
             : !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
 
-        /// <summary>Кнопка «снять формулу»: у любого параметра только для чтения и только
-        /// при выборе ОДНОГО элемента (при нескольких — формулу снимать неоднозначно).
-        /// Формула в семействе всегда на параметре ТИПА, но значение в проекте может
-        /// блокироваться и у строки «экземпляр».</summary>
+        /// <summary>Кнопка «снять формулу»: у любого параметра только для чтения и при
+        /// наличии в выборке хотя бы одного элемента (при нескольких — формула снимается
+        /// во всех их семействах). Формула в семействе всегда на параметре ТИПА, но
+        /// значение в проекте может блокироваться и у строки «экземпляр».</summary>
         public bool ShowClearFormula => !IsEditable && _allowClearFormula;
     }
 
@@ -75,6 +75,27 @@ namespace GrdRevit.Ui
     {
         public ObservableCollection<ElementParamRow> Rows { get; } = new ObservableCollection<ElementParamRow>();
 
+        /// <summary>Галочка «Переносить строки ячеек»: при включении длинные значения
+        /// переносятся на несколько строк, а высота строк таблицы растёт автоматически.</summary>
+        public static readonly DependencyProperty WrapCellsProperty =
+            DependencyProperty.Register(nameof(WrapCells), typeof(bool), typeof(InstanceParamsWindow),
+                new PropertyMetadata(false, OnWrapCellsChanged));
+
+        public bool WrapCells
+        {
+            get => (bool)GetValue(WrapCellsProperty);
+            set => SetValue(WrapCellsProperty, value);
+        }
+
+        private static void OnWrapCellsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var w = d as InstanceParamsWindow;
+            if (w?.ParamsGrid == null) return;
+            bool wrap = (bool)e.NewValue;
+            w.ParamsGrid.MinRowHeight = 30;
+            w.ParamsGrid.RowHeight = wrap ? double.NaN : 30;
+        }
+
         private readonly List<ElementId> _elementIds = new List<ElementId>();
         private bool _busy;
 
@@ -82,6 +103,7 @@ namespace GrdRevit.Ui
         {
             _elementIds.AddRange(elementIds ?? new List<ElementId>());
             InitializeComponent();
+            WindowTopmost.Track(this);
             DataContext = this;
             Loaded += (s, e) =>
             {
@@ -153,10 +175,10 @@ namespace GrdRevit.Ui
             if (!(sender is FrameworkElement fe) || !(fe.DataContext is ElementParamRow row)) return;
 
             var answer = MessageBox.Show(
-                "Будет отредактировано само СЕМЕЙСТВО (как через «Редактировать семейство»): " +
-                "у параметра «" + row.Name + "» формула уберётся у всех типов семейства, " +
-                "после чего семейство перезагрузится в проект.\n\n" +
-                "Это затронет ВСЕ экземпляры этого семейства в проекте. Продолжить?",
+                "Будут отредактированы сами СЕМЕЙСТВА (как через «Редактировать семейство»): " +
+                "у параметра «" + row.Name + "» формула уберётся у всех типов каждого семейства " +
+                "выбранных экземпляров, после чего семейства перезагрузятся в проект.\n\n" +
+                "Это затронет ВСЕ экземпляры этих семейств в проекте. Продолжить?",
                 "Снять формулу", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
             if (answer != MessageBoxResult.OK) return;
 
@@ -171,14 +193,14 @@ namespace GrdRevit.Ui
             StatusText.Text = "Снятие формулы: «" + row.Name + "»…";
             try
             {
-                var singleId = _elementIds.Count > 0 ? _elementIds[0] : ElementId.InvalidElementId;
-                handler.QueueClearFormula(singleId, row.Name, row.IsInstance, result =>
+                handler.QueueClearFormula(new List<ElementId>(_elementIds), row.Name, row.IsInstance, result =>
                 {
                     try
                     {
                         if (result.Applied > 0)
                         {
-                            SnackBar.Show("Формула снята: «" + row.Name + "» теперь редактируется.", SnackBarKind.Success);
+                            SnackBar.Show("Формула снята: «" + row.Name + "» теперь редактируется" +
+                                (result.Applied > 1 ? " (семейств: " + result.Applied + ")" : string.Empty) + ".", SnackBarKind.Success);
                         }
                         else if (result.Errors.Count > 0)
                         {
@@ -234,7 +256,7 @@ namespace GrdRevit.Ui
                             return;
                         }
 
-                        bool allowClearFormula = result.Elements.Count == 1;
+                        bool allowClearFormula = result.Elements.Count > 0;
                         foreach (var p in result.Params)
                             Rows.Add(new ElementParamRow(p, allowClearFormula));
 

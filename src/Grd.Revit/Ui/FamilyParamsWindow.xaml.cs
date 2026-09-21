@@ -124,12 +124,14 @@ namespace GrdRevit.Ui
         public string[] StorageOptions { get; } = { "Текст", "Число", "Целое", "Длина", "Площадь", "Объём" };
 
         private bool _busy;
+        private bool _applying;
         private bool _selectedMode;
         private readonly DispatcherTimer _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
 
         public FamilyParamsWindow()
         {
             InitializeComponent();
+            WindowTopmost.Track(this);
             DataContext = this;
             _debounce.Tick += (s, e) =>
             {
@@ -740,8 +742,9 @@ namespace GrdRevit.Ui
 
                 GrdLog.Log("OnMoveToFamily: «" + row.Name + "» в " + families.Count + " семейств" +
                            ", guid=" + row.Guid + ", экземпляр=" + row.IsInstance);
+                BeginApplying("Перенос параметра в семейства…");
                 handler.Queue(families, new List<FamilyParamOp> { op },
-                    RevitContext.Settings.LastSharedParamsPath, ShowResult);
+                    RevitContext.Settings.LastSharedParamsPath, OnApplyProgress, OnApplyDone);
                 ev.Raise();
             }
             catch (Exception ex)
@@ -821,6 +824,13 @@ namespace GrdRevit.Ui
 
             try
             {
+                if (_applying)
+                {
+                    MessageBox.Show("Операция уже выполняется, подождите завершения.",
+                        "Параметры семейств", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
                 var ev = RevitContext.FamilyParamsEvent;
                 if (ev == null || RevitContext.FamilyParamsHandler == null)
                 {
@@ -830,8 +840,9 @@ namespace GrdRevit.Ui
                 }
 
                 GrdLog.Log("OnApply: семейств=" + families.Count + ", операций=" + ops.Count);
+                BeginApplying("Применение параметров…");
                 RevitContext.FamilyParamsHandler.Queue(families, ops,
-                    RevitContext.Settings.LastSharedParamsPath, ShowResult);
+                    RevitContext.Settings.LastSharedParamsPath, OnApplyProgress, OnApplyDone);
                 ev.Raise();
             }
             catch (Exception ex)
@@ -840,6 +851,51 @@ namespace GrdRevit.Ui
                 MessageBox.Show("Ошибка: " + ex.Message, "Параметры семейств",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>Показывает панель прогресса и блокирует кнопку «Применить» на время операции.</summary>
+        private void BeginApplying(string message)
+        {
+            _applying = true;
+            ApplyButton.IsEnabled = false;
+            ApplyProgressPanel.Visibility = Visibility.Visible;
+            ApplyProgressBar.Value = 0;
+            ApplyProgressText.Text = message;
+        }
+
+        private void EndApplying()
+        {
+            _applying = false;
+            ApplyButton.IsEnabled = true;
+            ApplyProgressPanel.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>Вызывается обработчиком между семействами: обновляет прогресс-бар.</summary>
+        private void OnApplyProgress(FamilyParamsResult result, int done)
+        {
+            try
+            {
+                if (!_applying || !IsLoaded || Visibility != Visibility.Visible) return;
+                int total = Math.Max(result.TotalFamilies, 1);
+                double pct = Math.Max(0, Math.Min(100.0, done * 100.0 / total));
+                ApplyProgressBar.Value = pct;
+                ApplyProgressText.Text = "Обработано " + Math.Min(done, result.TotalFamilies) + " из " +
+                    result.TotalFamilies + " семейств" +
+                    (result.Errors.Count > 0 ? " (ошибок: " + result.Errors.Count + ")" : "") +
+                    (done >= result.TotalFamilies ? ".\nПерезагрузка семейств в проект…" : "…");
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("OnApplyProgress: EXCEPTION " + ex);
+            }
+        }
+
+        /// <summary>Вызывается обработчиком по завершении операции: прячет прогресс и показывает итог.</summary>
+        private void OnApplyDone(FamilyParamsResult result)
+        {
+            try { EndApplying(); }
+            catch (Exception ex) { GrdLog.Log("OnApplyDone (end): EXCEPTION " + ex); }
+            ShowResult(result);
         }
 
         private void ShowResult(FamilyParamsResult result)

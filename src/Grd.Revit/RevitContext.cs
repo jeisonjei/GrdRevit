@@ -62,10 +62,30 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _instanceParamsEvent;
         public static Autodesk.Revit.UI.ExternalEvent InstanceParamsEvent => _instanceParamsEvent;
 
+        /// <summary>Маршалит копирование параметров между семействами (окно «Скопировать параметры»).</summary>
+        public static Revit.CopyParamsHandler CopyParamsHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _copyParamsEvent;
+        public static Autodesk.Revit.UI.ExternalEvent CopyParamsEvent => _copyParamsEvent;
+
         /// <summary>Маршалит чтение/дублирование/переименование/открытие видов (окно «Управляющий видами»).</summary>
         public static Revit.ViewsManagerHandler ViewsManagerHandler;
         private static Autodesk.Revit.UI.ExternalEvent _viewsManagerEvent;
         public static Autodesk.Revit.UI.ExternalEvent ViewsManagerEvent => _viewsManagerEvent;
+
+        /// <summary>Маршалит чтение спецификаций с листов и их сетки (окно «Снимок спецификаций»).</summary>
+        public static Revit.ScheduleSnapshotHandler ScheduleSnapshotHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _scheduleSnapshotEvent;
+        public static Autodesk.Revit.UI.ExternalEvent ScheduleSnapshotEvent => _scheduleSnapshotEvent;
+
+        /// <summary>Маршалит печать листов в PDF пошагово (окно «Печать в PDF»).</summary>
+        public static Revit.SheetPrintHandler SheetPrintHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _sheetPrintEvent;
+        public static Autodesk.Revit.UI.ExternalEvent SheetPrintEvent => _sheetPrintEvent;
+
+        /// <summary>Маршалит экспорт листов в DWG (окно «Экспорт в DWG»).</summary>
+        public static Revit.DwgExportHandler DwgExportHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _dwgExportEvent;
+        public static Autodesk.Revit.UI.ExternalEvent DwgExportEvent => _dwgExportEvent;
 
         /// <summary>
         /// Создаёт ExternalEvent-обработчики. Допустимо ТОЛЬКО в контексте стандартного
@@ -110,11 +130,35 @@ namespace GrdRevit
                 _instanceParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(InstanceParamsHandler);
                 GrdLog.Log("EnsureHandlers: InstanceParamsEvent created");
             }
+            if (_copyParamsEvent == null)
+            {
+                CopyParamsHandler = new Revit.CopyParamsHandler();
+                _copyParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(CopyParamsHandler);
+                GrdLog.Log("EnsureHandlers: CopyParamsEvent created");
+            }
             if (_viewsManagerEvent == null)
             {
                 ViewsManagerHandler = new Revit.ViewsManagerHandler();
                 _viewsManagerEvent = Autodesk.Revit.UI.ExternalEvent.Create(ViewsManagerHandler);
                 GrdLog.Log("EnsureHandlers: ViewsManagerEvent created");
+            }
+            if (_scheduleSnapshotEvent == null)
+            {
+                ScheduleSnapshotHandler = new Revit.ScheduleSnapshotHandler();
+                _scheduleSnapshotEvent = Autodesk.Revit.UI.ExternalEvent.Create(ScheduleSnapshotHandler);
+                GrdLog.Log("EnsureHandlers: ScheduleSnapshotEvent created");
+            }
+            if (_sheetPrintEvent == null)
+            {
+                SheetPrintHandler = new Revit.SheetPrintHandler();
+                _sheetPrintEvent = Autodesk.Revit.UI.ExternalEvent.Create(SheetPrintHandler);
+                GrdLog.Log("EnsureHandlers: SheetPrintEvent created");
+            }
+            if (_dwgExportEvent == null)
+            {
+                DwgExportHandler = new Revit.DwgExportHandler();
+                _dwgExportEvent = Autodesk.Revit.UI.ExternalEvent.Create(DwgExportHandler);
+                GrdLog.Log("EnsureHandlers: DwgExportEvent created");
             }
         }
 

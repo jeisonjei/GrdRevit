@@ -58,7 +58,7 @@
                               SelectionMode="Single"
                               CanUserAddRows="False"
                               HorizontalAlignment="Left"
-                              GridLinesVisibility="Horizontal"
+                              GridLinesVisibility="All"
                               AlternatingRowBackground="#F5F8FC"
                               LoadingRow="OnLoadingRow">
                         <DataGrid.RowStyle>
@@ -103,7 +103,7 @@
                               IsReadOnly="True"
                               EnableRowVirtualization="True"
                               CanUserAddRows="False"
-                              GridLinesVisibility="Horizontal"
+                              GridLinesVisibility="All"
                               AlternatingRowBackground="#F5F8FC">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Помещение" Binding="{Binding Room}" Width="140" />

@@ -49,7 +49,7 @@ namespace GrdRevit.Ui
             EnsureShared();
             if (owner != null) _sharedWindow.Owner = owner;
             if (!_sharedWindow.IsVisible) _sharedWindow.Show();
-            _sharedWindow.Activate();
+            WindowRestore.Activate(_sharedWindow);
         }
 
         /// <summary>Открывает (или активирует) единственное окно настроек; owner — дескриптор главного окна Revit.</summary>
@@ -61,7 +61,7 @@ namespace GrdRevit.Ui
                 new WindowInteropHelper(_sharedWindow) { Owner = ownerHandle };
             }
             if (!_sharedWindow.IsVisible) _sharedWindow.Show();
-            _sharedWindow.Activate();
+            WindowRestore.Activate(_sharedWindow);
         }
 
         /// <summary>Имена типовых параметров механического оборудования (для выпадающего списка).</summary>
@@ -85,9 +85,12 @@ namespace GrdRevit.Ui
         public SettingsWindow()
         {
             InitializeComponent();
+            WindowTopmost.Track(this);
             DataContext = this;
 
             var settings = RevitContext.Settings;
+
+            WindowsTopmostBox.IsChecked = settings.WindowsTopmost;
 
             _valueMap = new ObservableCollection<MapPair>(FixedValueRows(settings.ValueParamMap));
             _exactMap = new ObservableCollection<MapPair>(
@@ -359,6 +362,14 @@ namespace GrdRevit.Ui
         private void OnCancel(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        /// <summary>Галочка «поверх всех окон»: применяем сразу ко всем открытым окнам и сохраняем в файл.</summary>
+        private void OnWindowsTopmostChanged(object sender, RoutedEventArgs e)
+        {
+            RevitContext.Settings.WindowsTopmost = WindowsTopmostBox.IsChecked == true;
+            RevitContext.SaveSettings();
+            WindowTopmost.ApplyAll();
         }
 
         private static Dictionary<string, string> ToDict(IEnumerable<MapPair> pairs)

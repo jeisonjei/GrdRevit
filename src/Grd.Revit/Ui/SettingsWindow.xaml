@@ -20,7 +20,7 @@
                 <DataGrid x:Name="ValueMapGrid"
                           AutoGenerateColumns="False"
                           CanUserAddRows="False" CanUserDeleteRows="False"
-                          Height="96" GridLinesVisibility="Horizontal">
+                          Height="96" GridLinesVisibility="All">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Значение прибора" Binding="{Binding Key, Mode=OneWay}" IsReadOnly="True" Width="1*"/>
                         <DataGridTemplateColumn Header="Параметр экземпляра Revit" Width="2*">
@@ -64,7 +64,7 @@
                 <DataGrid x:Name="ExactMapGrid"
                           AutoGenerateColumns="False"
                           CanUserAddRows="True" CanUserDeleteRows="True"
-                          Height="230" GridLinesVisibility="Horizontal">
+                          Height="230" GridLinesVisibility="All">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Код (например TPLCPL714T2L)" Binding="{Binding Key, UpdateSourceTrigger=PropertyChanged}" Width="2*"/>
                         <DataGridTextColumn Header="Имя типа Revit" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="2*"/>
@@ -88,6 +88,13 @@
                 <TextBlock Text="м" VerticalAlignment="Center" Margin="6,0,0,0"
                            Foreground="{StaticResource TextSecondaryBrush}"/>
             </StackPanel>
+        </GroupBox>
+
+        <GroupBox DockPanel.Dock="Top" Header="Окна" Margin="0,0,0,8" Padding="4">
+            <CheckBox x:Name="WindowsTopmostBox" Content="Держать окна плагина поверх всех окон"
+                      ToolTip="Окна плагина будут оставаться над окнами Revit и других программ, пока галочка включена"
+                      Checked="OnWindowsTopmostChanged" Unchecked="OnWindowsTopmostChanged"
+                      FontWeight="Medium"/>
         </GroupBox>
 
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">

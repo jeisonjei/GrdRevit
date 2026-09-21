@@ -32,6 +32,10 @@ namespace GrdRevit.Core
         /// <summary>Высота 3D-вида-фрагмента по умолчанию (в метрах) для кнопки «3D-фрагмент».</summary>
         public double Default3DBoxHeight { get; set; } = 3.0;
 
+        /// <summary>Имя последнего применённого шаблона 3D-вида (кнопка «3D-фрагмент»):
+        /// применяется к создаваемому фрагменту автоматически.</summary>
+        public string Last3DTemplateName { get; set; } = string.Empty;
+
         /// <summary>Путь к файлу .grd, загруженному последний раз.</summary>
         public string LastGrdPath { get; set; } = string.Empty;
 
@@ -52,6 +56,20 @@ namespace GrdRevit.Core
 
         /// <summary>Имя файла последнего экспорта спецификации в Calc.</summary>
         public string ScheduleExportName { get; set; } = string.Empty;
+
+        /// <summary>Папка последнего сохранения PDF со снимком спецификации («Снимок спецификаций»).</summary>
+        public string ScheduleSnapPdfDir { get; set; } = string.Empty;
+
+        /// <summary>Отмеченные для печати листы по документам: ключ документа -> номера листов,
+        /// разделённые переводом строки (окно «Печать в PDF»).</summary>
+        public Dictionary<string, string> SheetSelectionByDoc { get; set; } = new Dictionary<string, string>();
+
+        /// <summary>Полный путь последнего экспорта листов в DWG (окно «Экспорт в DWG»):
+        /// подставляется в диалог сохранения при следующем открытии.</summary>
+        public string SheetDwgExportPath { get; set; } = string.Empty;
+
+        /// <summary>Держать окна плагина поверх всех остальных окон (Topmost).</summary>
+        public bool WindowsTopmost { get; set; } = false;
 
         public static GrdSettings Load(string path)
         {

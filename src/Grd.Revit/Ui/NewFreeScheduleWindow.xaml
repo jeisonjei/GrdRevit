@@ -1,0 +1,43 @@
+<Window x:Class="GrdRevit.Ui.NewFreeScheduleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Новая свободная спецификация"
+        Width="520" WindowStartupLocation="CenterOwner"
+        SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <StackPanel Margin="14">
+        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextPrimaryBrush}"
+                   Text="Создаётся пустая спецификация на новом листе. Заголовки колонок берутся у выбранной спецификации-образца, строки вводятся вручную и хранятся только в плагине."/>
+        <TextBlock Text="Образец заголовков:" Margin="0,10,0,3" Foreground="{StaticResource TextSecondaryBrush}"/>
+        <ListBox x:Name="TemplateList" Height="150" SelectionChanged="OnTemplateChanged"
+                 DisplayMemberPath="Display" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        <CheckBox x:Name="UseAsTemplate" Content="Использовать как образец заголовков"
+                  Margin="0,8,0,0" IsChecked="True" Click="OnUseAsTemplateChanged"/>
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                <TextBlock Text="Номер листа:" Margin="0,0,0,3" Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBox x:Name="SheetNumberBox" Width="120" Padding="6,4" TextChanged="OnTextChanged"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+                <TextBlock Text="Имя листа:" Margin="0,0,0,3" Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBox x:Name="SheetNameBox" Padding="6,4" TextChanged="OnTextChanged"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Создать" Style="{StaticResource PrimaryButtonStyle}" Click="OnOk"
+                    x:Name="OkButton" Padding="20,6" FontWeight="SemiBold" IsDefault="True" IsEnabled="False"/>
+            <Button Content="Отмена" Click="OnCancel" Margin="8,0,0,0" Padding="20,6" IsCancel="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

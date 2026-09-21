@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.UI;
@@ -7,62 +7,59 @@ using GrdRevit.Ui;
 namespace GrdRevit
 {
     /// <summary>
-    /// Открывает окно «Параметры семейств»: добавление/удаление параметров
-    /// (обычных и общих) сразу у нескольких семейств активного документа.
+    /// Открывает окно «Снимок спецификаций»: слева листы со спецификациями (с поиском),
+    /// справа — редактируемая таблица-снимок выбранной спецификации с возможностью
+    /// вернуть её к виду из модели («Обновить из модели») и печатью в PDF.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
-    public class GrdFamilyParamsCommand : IExternalCommand
+    public class GrdScheduleSnapshotCommand : IExternalCommand
     {
-        private static FamilyParamsWindow _window;
+        private static ScheduleSnapshotWindow _window;
 
         public Result Execute(ExternalCommandData commandData, ref string message, Autodesk.Revit.DB.ElementSet elements)
         {
             var sw = Stopwatch.StartNew();
-            GrdLog.Log("F0: Execute start");
+            GrdLog.Log("SS0: Execute start");
             try
             {
-                GrdLog.Log("F1: before Initialize");
                 RevitContext.Initialize(commandData.Application);
-                GrdLog.Log("F2: after Initialize");
 
                 if (_window == null || !_window.IsVisible)
                 {
-                    var window = new FamilyParamsWindow();
+                    var window = new ScheduleSnapshotWindow();
                     window.Closed += (s, e) => _window = null;
-                    GrdLog.Log("F3: FamilyParamsWindow created");
 
-                    // Владение задаём до Show(), чтобы при закрытии окна активация
-                    // возвращалась Revit, а не «сворачивала» его в панель задач.
                     try
                     {
                         var owner = MainWindow.Instance;
                         if (owner != null && owner.IsVisible)
                         {
                             window.Owner = owner;
-                            GrdLog.Log("F3b: owner = главное окно плагина");
+                            GrdLog.Log("SS0b: owner = главное окно плагина");
                         }
                     }
                     catch { }
 
+                    _window = window;
                     window.Show();
-                    GrdLog.Log("F4: window shown");
+                    GrdLog.Log("SS1: окно показано");
                 }
                 else
                 {
                     WindowRestore.Activate(_window);
-                    GrdLog.Log("F4b: window activated");
+                    GrdLog.Log("SS1b: окно активировано");
                 }
 
-                GrdLog.Log("F5: succeeded in " + sw.ElapsedMilliseconds + " ms");
+                GrdLog.Log("SS2: succeeded in " + sw.ElapsedMilliseconds + " ms");
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
-                GrdLog.Log("F99: EXCEPTION: " + ex);
+                GrdLog.Log("SS99: EXCEPTION: " + ex);
                 try
                 {
-                    System.Windows.MessageBox.Show(ex.Message, "JTOOLS: параметры семейств",
+                    System.Windows.MessageBox.Show(ex.Message, "JTOOLS: снимок спецификаций",
                         System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
                 }
                 catch { }

@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using GrdRevit.Core;
 using GrdRevit.Revit;
 
 namespace GrdRevit.Ui
@@ -38,6 +41,13 @@ namespace GrdRevit.Ui
             set => Set(ref _marked, value);
         }
 
+        private bool _isFavorite;
+        public bool IsFavorite
+        {
+            get => _isFavorite;
+            set => Set(ref _isFavorite, value);
+        }
+
         public ViewsRow(ViewInfoItem v)
         {
             Id = v.Id;
@@ -54,8 +64,10 @@ namespace GrdRevit.Ui
     public partial class ViewsManagerWindow : Window
     {
         private readonly List<ViewsRow> _all = new List<ViewsRow>();
+        private readonly HashSet<string> _favIds = new HashSet<string>(StringComparer.Ordinal);
         private long _activeTemplateId;
         private string _activeTemplateName = string.Empty;
+        private string _docKey = string.Empty;
         private bool _busy;
 
         public ObservableCollection<ViewsRow> Rows { get; } = new ObservableCollection<ViewsRow>();
@@ -63,6 +75,7 @@ namespace GrdRevit.Ui
         public ViewsManagerWindow()
         {
             InitializeComponent();
+            WindowTopmost.Track(this);
             DataContext = Rows;
             Loaded += (s, e) =>
             {
@@ -72,6 +85,15 @@ namespace GrdRevit.Ui
                 }), System.Windows.Threading.DispatcherPriority.Input);
                 Reload();
             };
+        }
+
+        /// <summary>Ключ документа задаётся командой: избранное хранится по документу.</summary>
+        public void SetDocKey(string docKey)
+        {
+            _docKey = docKey ?? string.Empty;
+            _favIds.Clear();
+            foreach (var id in FavoriteStore.Load(_docKey, "views"))
+                _favIds.Add(id);
         }
 
         /// <summary>Фокус в поле поиска по умолчанию: вызывается при открытии окна
@@ -85,6 +107,16 @@ namespace GrdRevit.Ui
                 FilterBox.SelectAll();
             }
             catch { }
+        }
+
+        /// <summary>Повторный вызов по горячей клавише (или кнопке ленты) уже открытого окна:
+        /// разворачивает из свёрнутого состояния, активирует и ставит фокус в поле поиска,
+        /// чтобы пользователь мог сразу начать ввод.</summary>
+        public void RestoreWithFocus()
+        {
+            WindowRestore.Activate(this);
+            Dispatcher.BeginInvoke(new Action(FocusSearch),
+                System.Windows.Threading.DispatcherPriority.Input);
         }
 
         private ViewsManagerHandler Handler()
@@ -147,6 +179,8 @@ namespace GrdRevit.Ui
             _all.Clear();
             foreach (var v in views)
                 _all.Add(new ViewsRow(v));
+            foreach (var r in _all)
+                r.IsFavorite = _favIds.Contains(r.Id.ToString(CultureInfo.InvariantCulture));
             InfoText.Text = "Виды активного документа: " + _all.Count + " (с учётом фильтров).";
             ApplyFilter();
             StatusText.Text = "Готово.";
@@ -157,7 +191,7 @@ namespace GrdRevit.Ui
 
         private void ApplyFilter()
         {
-            if (FilterBox == null || ChkSection == null || ChkPlan == null || Chk3d == null || ChkSheet == null || ChkSchedule == null || RbStartsWith == null || RbContains == null) return;
+            if (FilterBox == null || ChkSection == null || ChkPlan == null || Chk3d == null || ChkSheet == null || ChkSchedule == null || RbStartsWith == null || RbContains == null || FavOnlyCheck == null) return;
             var search = (FilterBox.Text ?? string.Empty).Trim();
             bool showSection = ChkSection.IsChecked == true;
             bool showPlan = ChkPlan.IsChecked == true;
@@ -165,6 +199,7 @@ namespace GrdRevit.Ui
             bool showSheet = ChkSheet.IsChecked == true;
             bool showSchedule = ChkSchedule.IsChecked == true;
             bool startsWith = RbStartsWith.IsChecked == true;
+            bool onlyFav = FavOnlyCheck.IsChecked == true;
 
             if (SheetNumberCol != null)
                 SheetNumberCol.Visibility = showSheet && !showSection && !showPlan && !show3d && !showSchedule
@@ -191,20 +226,184 @@ namespace GrdRevit.Ui
                     if (!nameOk)
                         nameOk = r.KindText.IndexOf(search, StringComparison.CurrentCultureIgnoreCase) >= 0;
                 }
-                if (kindOk && nameOk)
+                if (kindOk && nameOk && (!onlyFav || r.IsFavorite))
                     Rows.Add(r);
             }
             if (CountText != null)
-                CountText.Text = "Показано: " + Rows.Count + " из " + _all.Count;
+                CountText.Text = "Показано: " + Rows.Count + " из " + _all.Count + (onlyFav ? " (избранное)" : "");
+        }
+
+        /// <summary>Возвращает фокус в поле поиска после щелчка по фильтрам
+        /// (пресетам, чекбоксам, способу поиска). Каретка — в конец, выделение
+        /// не трогаем: это перефокусировка, а не старт ввода с чистого листа.</summary>
+        private void RefocusSearch()
+        {
+            if (FilterBox == null || FilterBox.IsKeyboardFocusWithin) return;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    FilterBox.Focus();
+                    Keyboard.Focus(FilterBox);
+                    FilterBox.CaretIndex = FilterBox.Text.Length;
+                }
+                catch { }
+            }), System.Windows.Threading.DispatcherPriority.Input);
         }
 
         private void OnFilterChanged(object sender, RoutedEventArgs e)
         {
             ApplyFilter();
+            RefocusSearch();
+        }
+
+        /// <summary>Клавиши на уровне окна: Esc — закрыть окно (по желанию пользователя),
+        /// Ctrl+F — вернуть курсор в поле поиска, а ▲▼/Home/End — навигация по списку
+        /// видов/листов из любого места (поле поиска, таблица, фильтры, кнопки).
+        /// Перехват на уровне окна перехватывает стрелку раньше, чем её попытается
+        /// обработать системная навигация по фокусируемым элементам, поэтому выделение
+        /// никогда не «уходит» на кнопки и радио-кнопки окна. Во время правки ячейки
+        /// таблицы стрелками управляет поле ввода — не вмешиваемся.</summary>
+        private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.Key == Key.Escape && IsVisible)
+                {
+                    Close();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+                {
+                    FocusSearch();
+                    e.Handled = true;
+                    return;
+                }
+
+                // Редактирование ячейки таблицы: ▲▼/Home/End нужны полю ввода (каретка,
+                // курсор по тексту) — пропускаем. Поле поиска (FilterBox) не относится
+                // к правке ячейки: стрелки из него должны двигать список.
+                if (Keyboard.FocusedElement is TextBox t && !ReferenceEquals(t, FilterBox))
+                    return;
+
+                if (e.Key == Key.Down || e.Key == Key.Up || e.Key == Key.Home || e.Key == Key.End)
+                {
+                    if (Rows.Count > 0)
+                    {
+                        MoveSelection(e.Key);
+                        e.Handled = true;
+                    }
+                }
+            }
+            catch (Exception ex) { GrdLog.Log("ViewsManagerWindow.OnWindowPreviewKeyDown EXCEPTION: " + ex); }
+        }
+
+        /// <summary>Следующая строка списка от текущей выделенной: ▲▼ — на одну строку,
+        /// Home/End — в начало/конец списка.</summary>
+        private void MoveSelection(Key key)
+        {
+            var cur = ViewsGrid.SelectedItem as ViewsRow;
+            int idx = cur != null ? Rows.IndexOf(cur) : -1;
+            ViewsRow target;
+            if (key == Key.Down)
+                target = idx >= 0 ? Rows[Math.Min(idx + 1, Rows.Count - 1)] : Rows[0];
+            else if (key == Key.Up)
+                target = idx >= 0 ? Rows[Math.Max(idx - 1, 0)] : Rows[Rows.Count - 1];
+            else if (key == Key.Home)
+                target = Rows[0];
+            else
+                target = Rows[Rows.Count - 1];
+            SelectRowInGrid(target);
+        }
+
+        /// <summary>Выделяет строку, ставит текущую ячейку на колонку имени и держит фокус
+        /// в таблице. Фокус отдаётся конкретной строке/ячейке, а не контейнеру сетки:
+        /// если фокус остаётся на контейнере, сетка не «съедает» стрелку и та уходит
+        /// системной навигации — фокус прыгает по кнопкам и радио-кнопкам окна.</summary>
+        private void SelectRowInGrid(ViewsRow target)
+        {
+            if (target == null || ViewsGrid == null || NameCol == null) return;
+            ViewsGrid.SelectedItem = target;
+            ViewsGrid.CurrentItem = target;
+            ViewsGrid.CurrentCell = new DataGridCellInfo(target, NameCol);
+            ViewsGrid.ScrollIntoView(target);
+            ViewsGrid.UpdateLayout();
+            try
+            {
+                ViewsGrid.Focus();
+                var row = ViewsGrid.ItemContainerGenerator.ContainerFromItem(target) as DataGridRow;
+                Keyboard.Focus(row ?? (IInputElement)ViewsGrid);
+            }
+            catch { }
+        }
+
+        /// <summary>Клавиатура в поле поиска: Enter — открыть выбранный вид. Стрелки
+        /// и Home/End обрабатываются на уровне окна (см. OnWindowPreviewKeyDown),
+        /// чтобы выделение двигалось строго по списку.</summary>
+        private void OnSearchKeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.Key == Key.Enter)
+                {
+                    if (Rows.Count == 0) return;
+                    var row = ViewsGrid.SelectedItem as ViewsRow ?? Rows[0];
+                    OpenRow(row);
+                    e.Handled = true;
+                }
+            }
+            catch (Exception ex) { GrdLog.Log("ViewsManagerWindow.OnSearchKeyDown EXCEPTION: " + ex); }
+        }
+
+        /// <summary>Клавиатура в сетке: Enter — открыть выбранный вид (если не идёт
+        /// правка ячейки), а Ctrl+F — дублирующий возврат курсора в поле поиска
+        /// (основной перехват — на уровне окна). Стрелки и Home/End обрабатываются
+        /// на уровне окна (см. OnWindowPreviewKeyDown).</summary>
+        private void OnGridKeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+                {
+                    FocusSearch();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.Enter && !(Keyboard.FocusedElement is TextBox))
+                {
+                    if (ViewsGrid.SelectedItem is ViewsRow row)
+                    {
+                        OpenRow(row);
+                        e.Handled = true;
+                    }
+                }
+            }
+            catch (Exception ex) { GrdLog.Log("ViewsManagerWindow.OnGridKeyDown EXCEPTION: " + ex); }
         }
 
         private void OnMatchModeChanged(object sender, RoutedEventArgs e)
         {
+            ApplyFilter();
+            RefocusSearch();
+        }
+
+        /// <summary>Переключатель «Только избранное»: просто переприменяем фильтр.</summary>
+        private void OnFavOnlyChanged(object sender, RoutedEventArgs e)
+        {
+            ApplyFilter();
+            RefocusSearch();
+        }
+
+        /// <summary>Звёздочка в строке: отметить/снять избранное и переприменить фильтр.</summary>
+        private void OnToggleFavoriteClick(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button b) || !(b.Tag is ViewsRow row)) return;
+            row.IsFavorite = !row.IsFavorite;
+            FavoriteStore.Set(_docKey, "views",
+                row.Id.ToString(CultureInfo.InvariantCulture), row.IsFavorite);
             ApplyFilter();
         }
 
@@ -215,6 +414,7 @@ namespace GrdRevit.Ui
         {
             if (!(sender is RadioButton rb) || rb.IsChecked != true) return;
             ApplyPreset(rb);
+            RefocusSearch();
         }
 
         private void ApplyPreset(RadioButton rb)

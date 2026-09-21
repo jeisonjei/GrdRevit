@@ -18,6 +18,7 @@ namespace GrdRevit.Ui
         {
             GrdLog.Log("MainWindow: ctor start");
             InitializeComponent();
+            WindowTopmost.Track(this);
             _vm = new MainViewModel();
             _vm.FileDialogOwner = this;
             DataContext = _vm;

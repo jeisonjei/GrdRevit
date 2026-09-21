@@ -18,3 +18,8 @@ dist/
 
 # Logs
 *.log
+
+# One-off probe/debug scripts
+/_probe*.ps1
+/probe_addin.ps1
+/build/_probe*.ps1

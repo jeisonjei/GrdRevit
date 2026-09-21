@@ -1,0 +1,111 @@
+<Window x:Class="GrdRevit.Ui.SheetPdfPrintWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Печать в PDF"
+        Width="760" Height="760"
+        MinWidth="560" MinHeight="520"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <GroupBox DockPanel.Dock="Top" Margin="0,0,0,6" Padding="6">
+            <TextBlock Text="Отметьте листы и нажмите «Печать в PDF» — все выбранные листы сохраняются в один PDF-файл. Размер страницы подбирается автоматически по каждому листу. Векторный вывод компактнее; если знак «Ø» искажается, включите растровый вывод. Звёздочка ★ отмечает избранные листы — они учитываются и в окне «Экспорт в DWG» и запоминаются по документу."
+                       TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"/>
+        </GroupBox>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+            <StackPanel Orientation="Horizontal" Margin="2,0,0,6">
+                <CheckBox x:Name="RasterCheck" Content="Растровый вывод (надёжный знак «Ø»)"
+                          ToolTip="Каждый лист экспортируется в изображение 300 DPI и собирается в PDF. Файл крупнее, текст не выделяется, но «Ø» отображается верно."
+                          VerticalAlignment="Center"/>
+                <CheckBox x:Name="BlackWhiteCheck" Content="Чёрно-белый (вектор)"
+                          ToolTip="По умолчанию PDF цветной. Отметьте для чёрно-белого вывода (BlackLine); на растровый режим не влияет."
+                          VerticalAlignment="Center" Margin="18,0,0,0"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="PrintBtn" Content="Печать в PDF" Click="OnPrint" Padding="16,6"
+                        Style="{StaticResource PrimaryButtonStyle}" IsEnabled="False"
+                        ToolTip="Сохранить отмеченные листы в один PDF-файл."/>
+                <Button x:Name="CancelBtn" Content="Отмена" Click="OnCancel" Padding="12,6" Margin="8,0,0,0"
+                        Visibility="Collapsed" ToolTip="Прервать печать и удалить временные файлы."/>
+                <TextBlock x:Name="PercentText" Margin="12,0,0,0" VerticalAlignment="Center"
+                           MinWidth="46" TextAlignment="Right" FontWeight="SemiBold"/>
+            </StackPanel>
+            <ProgressBar x:Name="Progress" Height="18" Margin="0,6,0,0" Minimum="0" Maximum="1" Value="0"/>
+            <TextBlock x:Name="StatusText" Margin="2,4,0,0" TextWrapping="Wrap"
+                       Foreground="{StaticResource TextSecondaryBrush}"/>
+        </StackPanel>
+
+        <GroupBox Header="Листы" Padding="4">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="2,0,6,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBox x:Name="SearchBox" Width="240" Padding="4,3" TextChanged="OnSearchChanged"/>
+                        <Button Content="Сбросить" Click="OnSearchReset" Margin="6,0,0,0" Padding="8,2"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="2,5,0,0">
+                        <Button x:Name="SelectAllBtn" Content="Выбрать все" Click="OnSelectAll" Padding="8,2"/>
+                        <Button x:Name="SelectNoneBtn" Content="Снять все" Click="OnSelectNone" Margin="6,0,0,0" Padding="8,2"/>
+                        <CheckBox x:Name="OnlyCheckedCheck" Content="Только выбранные" Margin="14,0,0,0"
+                                  VerticalAlignment="Center" Checked="OnOnlyCheckedChanged" Unchecked="OnOnlyCheckedChanged"
+                                  ToolTip="Показывать в списке только отмеченные листы."/>
+                        <CheckBox x:Name="OnlyFavCheck" Content="★ Только избранное" Margin="14,0,0,0"
+                                  VerticalAlignment="Center" Checked="OnOnlyFavChanged" Unchecked="OnOnlyFavChanged"
+                                  ToolTip="Показывать в списке только избранные (★) листы. Избранное общее для «Печати в PDF» и «Экспорта в DWG» и запоминается по документу."/>
+                        <TextBlock x:Name="SheetCount" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="SelectedCount" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+                <ListBox x:Name="SheetsList" HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         PreviewKeyDown="OnListPreviewKeyDown"
+                         ToolTip="Пробел — отметить/снять лист, на котором стоит выделение.">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="2,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Click="OnFavClick" Tag="{Binding}" Padding="0" Margin="0,0,4,0"
+                                        Background="Transparent" BorderThickness="0" FontSize="14"
+                                        VerticalAlignment="Center" HorizontalAlignment="Left"
+                                        ToolTip="Отметить лист как избранный (★) — общее для «Печати в PDF» и «Экспорта в DWG»">
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="☆"/>
+                                                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                                                        <Setter Property="Text" Value="★"/>
+                                                        <Setter Property="Foreground" Value="DarkGoldenrod"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Button>
+                                <CheckBox Grid.Column="1" VerticalAlignment="Center" Margin="0,0,6,0"
+                                          IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                          Click="OnSheetCheckToggled"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Display}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </GroupBox>
+    </DockPanel>
+</Window>

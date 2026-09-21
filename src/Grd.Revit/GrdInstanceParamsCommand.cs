@@ -87,6 +87,7 @@ namespace GrdRevit
                 }
                 else
                 {
+                    WindowRestore.Activate(_window);
                     _window.SetSelection(elementIds);
                     GrdLog.Log("IP1b: окно активировано, выборка обновлена (id=" +
                                string.Join(",", elementIds.Select(x => x.Value)) + ")");

@@ -27,26 +27,51 @@ namespace GrdRevit.Revit
     {
         private readonly object _sync = new object();
         private List<string> _familyNames;
-        private List<FamilyParamOp> _ops;
-        private string _sharedFilePath;
         private bool _clearFormulaMode;
         private string _clearFormulaParam;
         private bool _verifyMode;
         private List<FamilyParamOp> _verifyOps;
         private Action<FamilyParamsResult> _callback;
 
-        public void Queue(List<string> familyNames, List<FamilyParamOp> ops, string sharedFilePath, Action<FamilyParamsResult> callback)
+        /// <summary>Сколько семейств подготавливать за одно событие ожидания: окно плагина
+        /// успевает отрисоваться между событиями, показывая прогресс.</summary>
+        private const int PrepareChunkSize = 3;
+
+        /// <summary>Активный пакет операции «применить параметры»: обрабатывается порциями,
+        /// чтобы между семействами окно плагина могло обновить прогресс-бар.</summary>
+        private Batch _batch;
+
+        private sealed class Batch
+        {
+            public List<string> Names = new List<string>();
+            public List<FamilyParamOp> Ops = new List<FamilyParamOp>();
+            public string SharedPath = string.Empty;
+            public int Index;
+            public bool Loading;
+            public List<ReadyFamily> Pending = new List<ReadyFamily>();
+            public FamilyParamsResult Result = new FamilyParamsResult();
+            public Action<FamilyParamsResult, int> ProgressCb;
+            public Action<FamilyParamsResult> DoneCb;
+        }
+
+        /// <summary>Очередь операции «применить параметры» к семействам. Выполняется поэтапно:
+        /// после каждой порции семейств вызывается <paramref name="progress"/> (результат и
+        /// индекс обработанных семейств), по завершении — <paramref name="done"/> с итогом.</summary>
+        public void Queue(List<string> familyNames, List<FamilyParamOp> ops, string sharedFilePath,
+            Action<FamilyParamsResult, int> progress, Action<FamilyParamsResult> done)
         {
             lock (_sync)
             {
-                _familyNames = familyNames ?? new List<string>();
-                _ops = ops ?? new List<FamilyParamOp>();
-                _sharedFilePath = sharedFilePath ?? string.Empty;
-                _clearFormulaMode = false;
-                _clearFormulaParam = null;
-                _verifyMode = false;
-                _verifyOps = null;
-                _callback = callback;
+                var names = familyNames ?? new List<string>();
+                _batch = new Batch
+                {
+                    Names = names,
+                    Ops = ops ?? new List<FamilyParamOp>(),
+                    SharedPath = sharedFilePath ?? string.Empty,
+                    Result = new FamilyParamsResult { TotalFamilies = names.Count },
+                    ProgressCb = progress,
+                    DoneCb = done
+                };
             }
         }
 
@@ -58,8 +83,6 @@ namespace GrdRevit.Revit
             lock (_sync)
             {
                 _familyNames = familyNames ?? new List<string>();
-                _ops = null;
-                _sharedFilePath = null;
                 _clearFormulaMode = true;
                 _clearFormulaParam = paramName ?? string.Empty;
                 _verifyMode = false;
@@ -78,8 +101,6 @@ namespace GrdRevit.Revit
             lock (_sync)
             {
                 _familyNames = familyNames ?? new List<string>();
-                _ops = null;
-                _sharedFilePath = null;
                 _clearFormulaMode = false;
                 _clearFormulaParam = null;
                 _verifyMode = true;
@@ -95,9 +116,135 @@ namespace GrdRevit.Revit
 
         public void Execute(UIApplication app)
         {
+            Batch batch;
+            lock (_sync) { batch = _batch; }
+            if (batch != null)
+            {
+                try { ExecuteBatch(app, batch); }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("FamilyParamsHandler.ExecuteBatch: EXCEPTION: " + ex);
+                    batch.Result.Errors.Add("Ошибка: " + ex.Message);
+                    FinalizeBatch(batch);
+                }
+                return;
+            }
+            ExecuteSingleShot(app);
+        }
+
+        /// <summary>Поэтапное выполнение операции «применить параметры»: по PrepareChunkSize
+        /// семейств за событие (пока окно плагина успевает рисовать прогресс между событиями),
+        /// после подготовки всех семейств — пакетная перезагрузка одной транзакцией.</summary>
+        private void ExecuteBatch(UIApplication app, Batch b)
+        {
+            var uiDoc = app?.ActiveUIDocument;
+            var doc = uiDoc?.Document;
+
+            if (!b.Loading && !string.IsNullOrEmpty(b.SharedPath) && System.IO.File.Exists(b.SharedPath))
+            {
+                // Файл общих параметров для сеанса: указываем заранее, чтобы общие параметры
+                // добавлялись из него, а новые определения попадали в правильный файл.
+                try { app.Application.SharedParametersFilename = b.SharedPath; }
+                catch (Exception ex)
+                {
+                    // Файл уже задан или недоступен — продолжаем, Revit сам разберётся.
+                    GrdLog.Log("FamilyParamsHandler: SharedParametersFilename: " + ex.Message);
+                }
+            }
+
+            if (b.Loading)
+            {
+                RunLoadPhase(app, b);
+                return;
+            }
+
+            int done = 0;
+            while (b.Index < b.Names.Count && done < PrepareChunkSize)
+            {
+                var familyName = b.Names[b.Index++];
+                done++;
+                string line;
+                try
+                {
+                    line = doc == null
+                        ? "! Нет активного документа Revit."
+                        : PrepareFamily(doc, app, familyName, b.Ops, b.Pending);
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("FamilyParamsHandler: «" + familyName + "» EXCEPTION: " + ex);
+                    line = "! «" + familyName + "»: " + ex.Message;
+                }
+                if (line == null) continue;
+                if (line.StartsWith("!")) b.Result.Errors.Add(line);
+                else { b.Result.AppliedFamilies++; b.Result.Summary.Add(line); }
+            }
+
+            NotifyProgress(b, b.Index);
+            if (b.Index >= b.Names.Count)
+            {
+                // Подготовка всех семейств завершена — переходим к пакетной перезагрузке.
+                b.Loading = true;
+                NotifyProgress(b, b.Index);
+            }
+            Raise();
+        }
+
+        private void NotifyProgress(Batch b, int done)
+        {
+            try { b.ProgressCb?.Invoke(b.Result, done); }
+            catch (Exception ex) { GrdLog.Log("FamilyParamsHandler: progress EXCEPTION: " + ex); }
+        }
+
+        private void RunLoadPhase(UIApplication app, Batch b)
+        {
+            var doc = app?.ActiveUIDocument?.Document;
+            var problems = new ProblemCollector();
+            try
+            {
+                if (doc == null)
+                {
+                    b.Result.Errors.Add("Нет активного документа Revit.");
+                }
+                else if (b.Pending.Count > 0)
+                {
+                    LoadBatch(doc, b.Pending, b.Result, problems);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsHandler.RunLoadPhase: EXCEPTION: " + ex);
+                b.Result.Errors.Add("Ошибка: " + ex.Message);
+            }
+
+            // Пропущенные («вопросные») семейства — отдельной спецификацией и сразу открыть.
+            if (problems.FamilyNames.Count > 0)
+            {
+                CreateProblemSchedule(app, doc, problems);
+            }
+            FinalizeBatch(b);
+        }
+
+        private void FinalizeBatch(Batch b)
+        {
+            lock (_sync) { if (ReferenceEquals(_batch, b)) _batch = null; }
+            GrdLog.Log("FamilyParamsHandler: применено " + b.Result.AppliedFamilies + " из " +
+                       b.Result.TotalFamilies + ", ошибок " + b.Result.Errors.Count);
+            try { b.DoneCb?.Invoke(b.Result); }
+            catch (Exception ex) { GrdLog.Log("FamilyParamsHandler: done EXCEPTION: " + ex); }
+        }
+
+        /// <summary>Запланировать продолжение обработки и дать окну плагина отрисоваться.</summary>
+        private void Raise()
+        {
+            try { RevitContext.FamilyParamsEvent?.Raise(); }
+            catch (Exception ex) { GrdLog.Log("FamilyParamsHandler.Raise EXCEPTION: " + ex); }
+        }
+
+        /// <summary>Разовая обработка одношаговых операций: «снять формулу» и «проверить».</summary>
+        private void ExecuteSingleShot(UIApplication app)
+        {
             List<string> names;
-            List<FamilyParamOp> ops;
-            string path;
             bool clearFormula;
             string clearParam;
             bool verify;
@@ -106,16 +253,12 @@ namespace GrdRevit.Revit
             lock (_sync)
             {
                 names = _familyNames;
-                ops = _ops;
-                path = _sharedFilePath;
                 clearFormula = _clearFormulaMode;
                 clearParam = _clearFormulaParam;
                 verify = _verifyMode;
                 verifyOps = _verifyOps;
                 cb = _callback;
                 _familyNames = null;
-                _ops = null;
-                _sharedFilePath = null;
                 _clearFormulaMode = false;
                 _clearFormulaParam = null;
                 _verifyMode = false;
@@ -135,7 +278,7 @@ namespace GrdRevit.Revit
                     ? ApplyVerify(app, names, verifyOps)
                     : clearFormula
                         ? ApplyClearFormula(app, names, clearParam)
-                        : Apply(app, names, ops, path);
+                        : new FamilyParamsResult { TotalFamilies = names == null ? 0 : names.Count };
             }
             catch (Exception ex)
             {
@@ -149,332 +292,730 @@ namespace GrdRevit.Revit
             catch (Exception ex) { GrdLog.Log("FamilyParamsHandler.Execute: callback EXCEPTION: " + ex); }
         }
 
-        private static FamilyParamsResult Apply(UIApplication app, List<string> names, List<FamilyParamOp> ops, string sharedPath)
+/// <summary>
+/// Подготавливает одно семейство: проверяет, не покрыт ли общий параметр привязкой
+/// в проекте (BindingMap), при необходимости редактирует документ семейства и
+/// сохраняет его во временный файл, добавляя в <paramref name="pending"/> для
+/// пакетной перезагрузки. Возвращает строку отчёта (ошибки — с «!»), либо null,
+/// если семейство ушло на перезагрузку.
+/// </summary>
+private static string PrepareFamily(Document doc, UIApplication app, string familyName,
+    List<FamilyParamOp> ops, List<ReadyFamily> pending)
+{
+    Family family = null;
+    foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+    {
+        var f = e as Family;
+        if (f == null || string.IsNullOrEmpty(f.Name)) continue;
+        if (string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase))
         {
-            var result = new FamilyParamsResult();
-            var uiDoc = app?.ActiveUIDocument;
-            if (uiDoc?.Document == null)
-            {
-                result.Errors.Add("Нет активного документа Revit.");
-                result.TotalFamilies = names == null ? 0 : names.Count;
-                return result;
-            }
-            var doc = uiDoc.Document;
-            result.TotalFamilies = names == null ? 0 : names.Count;
-            if (result.TotalFamilies == 0)
-            {
-                result.Errors.Add("Не выбрано ни одного семейства.");
-                return result;
-            }
-            if (ops == null || ops.Count == 0)
-            {
-                result.Errors.Add("Не задано ни одной операции с параметрами.");
-                return result;
-            }
-
-            // Файл общих параметров для сеанса: указываем заранее, чтобы общие параметры
-            // добавлялись из него, а новые определения попадали в правильный файл.
-            if (!string.IsNullOrEmpty(sharedPath) && System.IO.File.Exists(sharedPath))
-            {
-                try { app.Application.SharedParametersFilename = sharedPath; }
-                catch (Exception ex)
-                {
-                    // Файл уже задан или недоступен — продолжаем, Revit сам разберётся.
-                    GrdLog.Log("FamilyParamsHandler: SharedParametersFilename: " + ex.Message);
-                }
-            }
-
-            var loadOpts = new FamilyLoadOptionsImpl();
-            foreach (var familyName in names)
-            {
-                var line = ApplyOne(doc, app, familyName, ops, loadOpts);
-                if (line.StartsWith("!")) result.Errors.Add(line);
-                else { result.AppliedFamilies++; result.Summary.Add(line); }
-            }
-            return result;
+            family = f;
+            break;
         }
+    }
+    if (family == null) return "! Семейство «" + familyName + "» не найдено в документе.";
 
-        private static string ApplyOne(Document doc, UIApplication app, string familyName, List<FamilyParamOp> ops, IFamilyLoadOptions loadOpts)
+    // Быстрый путь: общий параметр со статусом «Добавить» уже привязан к категории
+    // семейства в проекте (BindingMap) тем же способом (тип/экземпляр) — элементы
+    // семейства его уже имеют, открывать и перезагружать семейство не нужно.
+    var projectCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var op in ops)
+    {
+        if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+        if (AlreadyCoveredByProjectBinding(doc, family, op)) projectCovered.Add(op.Name);
+    }
+    var workOps = ops
+        .Where(o => o != null && !string.IsNullOrEmpty(o.Name) && !projectCovered.Contains(o.Name))
+        .ToList();
+    if (workOps.Count == 0)
+        return "«" + familyName + "»: уже привязано в проекте: " + string.Join(", ", projectCovered);
+
+    Document fdoc;
+    try { fdoc = doc.EditFamily(family); }
+    catch (Exception ex)
+    {
+        return "! «" + familyName + "»: не удалось открыть семейство: " + ex.Message;
+    }
+
+    var ready = new ReadyFamily { FamilyName = familyName };
+    foreach (var n in projectCovered) ready.Already.Add(n + " (привязка в проекте)");
+
+    var added = ready.Added;
+    var removed = ready.Removed;
+    var skipped = ready.Skipped;
+    var already = ready.Already;
+    var rebound = ready.Rebound;
+    var reboundNames = ready.ReboundNamesSet;
+    var bindSnapshots = ready.BindSnapshots;
+    var valueSnapshots = ready.ValueSnapshots;
+    string tempPath = null;
+    int sameName = 0;
+    try
+    {
+        // Параметры, привязанные к категории в ПРОЕКТЕ, но не встроенные
+        // в семейство, в FamilyManager отсутствуют — «экземпляр ↔ тип» для
+        // них выполняется перепривязкой в проекте (ReInsert). Делаем это
+        // отдельной транзакцией проекта ДО правок семейного файла.
+        try
         {
-            Family family = null;
-            foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+            bool anyProjectRebind = false;
+            foreach (var op in workOps)
             {
-                var f = e as Family;
-                if (f == null || string.IsNullOrEmpty(f.Name)) continue;
-                if (string.Equals(f.Name, familyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    family = f;
-                    break;
-                }
+                if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+                if (FindParam(fdoc.FamilyManager, op) != null) continue;
+                anyProjectRebind = true;
+                break;
             }
-            if (family == null) return "! Семейство «" + familyName + "» не найдено в документе.";
-
-            Document fdoc;
-            try { fdoc = doc.EditFamily(family); }
-            catch (Exception ex)
+            if (anyProjectRebind)
             {
-                return "! «" + familyName + "»: не удалось открыть семейство: " + ex.Message;
-            }
-
-            var added = new List<string>();
-            var removed = new List<string>();
-            var skipped = new List<string>();
-            var already = new List<string>();
-            var rebound = new List<string>();
-            var reboundNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var sameName = 0;
-            try
-            {
-                // Параметры, привязанные к категории в ПРОЕКТЕ, но не встроенные
-                // в семейство, в FamilyManager отсутствуют — «экземпляр ↔ тип» для
-                // них выполняется перепривязкой в проекте (ReInsert). Делаем это
-                // отдельной транзакцией проекта ДО правок семейного файла.
-                try
+                using (var pt = new Transaction(doc, "JTOOLS: смена привязки параметров (проект)"))
                 {
-                    bool anyProjectRebind = false;
-                    foreach (var op in ops)
+                    pt.Start();
+                    foreach (var op in workOps)
                     {
                         if (op == null || string.IsNullOrEmpty(op.Name)) continue;
                         if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
                         if (FindParam(fdoc.FamilyManager, op) != null) continue;
-                        anyProjectRebind = true;
-                        break;
-                    }
-                    if (anyProjectRebind)
-                    {
-                        using (var pt = new Transaction(doc, "JTOOLS: смена привязки параметров (проект)"))
+                        if (TryProjectRebind(doc, family, op))
                         {
-                            pt.Start();
-                            foreach (var op in ops)
-                            {
-                                if (op == null || string.IsNullOrEmpty(op.Name)) continue;
-                                if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
-                                if (FindParam(fdoc.FamilyManager, op) != null) continue;
-                                if (TryProjectRebind(doc, family, op))
-                                {
-                                    rebound.Add(op.Name + " (" + (op.IsInstance ? "тип→экземпляр" : "экземпляр→тип") + ")");
-                                    reboundNames.Add(op.Name);
-                                }
-                            }
-                            pt.Commit();
+                            rebound.Add(op.Name + " (" + (op.IsInstance ? "тип→экземпляр" : "экземпляр→тип") + ")");
+                            reboundNames.Add(op.Name);
                         }
                     }
+                    pt.Commit();
                 }
-                catch (Exception ex)
-                {
-                    GrdLog.Log("FamilyParamsHandler: проектная перепривязка EXCEPTION: " + ex);
-                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GrdLog.Log("FamilyParamsHandler: проектная перепривязка EXCEPTION: " + ex);
+        }
 
-                // Изменение параметров в документе семейства ОБЯЗАНО идти внутри
-                // транзакции этого документа. Иначе AddParameter/RemoveParameter/
-                // MakeInstance оставляют «висячие» правки: сводка показывает «добавлено»,
-                // но SaveAs их не фиксирует, и после LoadFamily параметра в семействе нет.
-                using (var ft = new Transaction(fdoc, "JTOOLS: параметры «" + familyName + "»"))
+        // Изменение параметров в документе семейства ОБЯЗАНО идти внутри
+        // транзакции этого документа. Иначе AddParameter/RemoveParameter/
+        // MakeInstance оставляют «висячие» правки: сводка показывает «добавлено»,
+        // но SaveAs их не фиксирует, и после LoadFamily параметра в семействе нет.
+        using (var ft = new Transaction(fdoc, "JTOOLS: параметры «" + familyName + "»"))
+        {
+            ft.Start();
+            try
+            {
+                foreach (var op in workOps)
                 {
-                    ft.Start();
+                    if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+                    if (reboundNames.Contains(op.Name)) continue;
                     try
                     {
-                        foreach (var op in ops)
-                        {
-                            if (op == null || string.IsNullOrEmpty(op.Name)) continue;
-                            if (reboundNames.Contains(op.Name)) continue;
-                            try
-                            {
-                                ApplyOp(fdoc, app, op, added, removed, skipped, already);
-                            }
-                            catch (Exception ex)
-                            {
-                                skipped.Add(op.Name + " («" + ex.Message + "»)");
-                            }
-                        }
+                        ApplyOp(fdoc, app, op, added, removed, skipped, already);
                     }
-                    catch
-                    {
-                        try { ft.RollBack(); } catch { }
-                        throw;
-                    }
-                    ft.Commit();
-                }
-
-                GrdLog.Log("FamilyParamsHandler: после правок в семействе «" + familyName +
-                           "» параметров=" + fdoc.FamilyManager?.GetParameters().Count +
-                           ", OwnerFamily=" + (fdoc.OwnerFamily?.Name ?? "<null>") +
-                           ", PathName=" + (fdoc.PathName ?? "<н/з>"));
-
-                // Если в семействе ничего не изменилось (параметры в нём уже были —
-                // добавление сработало только для других семейств), перезагружать его
-                // не нужно: перезагрузка вхолостую может затронуть значения параметров.
-                if (added.Count == 0 && removed.Count == 0)
-                {
-                    var nb = new List<string>();
-                    if (already.Count > 0) nb.Add("уже есть: " + string.Join(", ", already));
-                    if (skipped.Count > 0) nb.Add("пропущено: " + string.Join(", ", skipped));
-                    if (rebound.Count > 0) nb.Add("смена привязки (проект): " + string.Join(", ", rebound));
-                    GrdLog.Log("FamilyParamsHandler: «" + familyName + "» без изменений — без перезагрузки");
-                    return "«" + familyName + "»: " + (nb.Count > 0 ? string.Join("; ", nb) : "нет изменений");
-                }
-
-                // Снимаем текущие значения параметров со сменой привязки «экземпляр ↔ тип»:
-                // после LoadFamily Revit обнуляет их, и мы вернём их обратно (RestoreBinding).
-                // Момент важен: правки сделаны только в документе семейства, проект не тронут.
-                var bindSnapshots = new List<BindingSnapshot>();
-foreach (var op in ops)
-                    {
-                        if (op == null || string.IsNullOrEmpty(op.Name)) continue;
-                        if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
-                        if (reboundNames.Contains(op.Name)) continue;
-                        try
-                        {
-                            bindSnapshots.Add(CaptureBinding(doc, familyName, op.Name, wasInstance: !op.IsInstance));
-                        }
                     catch (Exception ex)
                     {
-                        GrdLog.Log("FamilyParamsHandler: capture «" + op.Name + "» EXCEPTION: " + ex);
+                        skipped.Add(op.Name + " («" + ex.Message + "»)");
                     }
                 }
+            }
+            catch
+            {
+                try { ft.RollBack(); } catch { }
+                throw;
+            }
+            ft.Commit();
+        }
 
-                // «Перенести в семейство» / добавление общего параметра, который СЕЙЧАС
-                // привязан к проекту: значения параметра лежат на экземплярах (или типах)
-                // в документе. Сохраняем их ДО перезагрузки семейства, после LoadFamily
-                // возвращаем обратно (иначе значения обнуляются).
-                var valueSnapshots = new List<ParamValueSnapshot>();
-                foreach (var op in ops)
-                {
-                    if (op == null || string.IsNullOrEmpty(op.Name) || op.Remove) continue;
-                    if (op.Source != ParamSourceKind.Shared) continue;
-                    if (!string.Equals(op.Status, "Добавить", StringComparison.OrdinalIgnoreCase)) continue;
-                    var binding = ProjectBindingFor(doc, family, op);
-                    if (binding == null) continue;
-                    valueSnapshots.AddRange(CaptureValues(doc, family, op.Name, binding));
-                }
+        GrdLog.Log("FamilyParamsHandler: после правок в семействе «" + familyName +
+                   "» параметров=" + fdoc.FamilyManager?.GetParameters().Count +
+                   ", OwnerFamily=" + (fdoc.OwnerFamily?.Name ?? "<null>") +
+                   ", PathName=" + (fdoc.PathName ?? "<н/з>"));
 
-                string tempPath = null;
-                bool loaded = false;
-                var beforeNames = FamilyNames(doc);
+        // Если в семействе ничего не изменилось (параметры в нём уже были —
+        // добавление сработало только для других семейств), перезагружать его
+        // не нужно: перезагрузка вхолостую может затронуть значения параметров.
+        if (added.Count == 0 && removed.Count == 0)
+        {
+            var nb = new List<string>();
+            if (already.Count > 0) nb.Add("уже есть: " + string.Join(", ", already));
+            if (skipped.Count > 0) nb.Add("пропущено: " + string.Join(", ", skipped));
+            if (rebound.Count > 0) nb.Add("смена привязки (проект): " + string.Join(", ", rebound));
+            GrdLog.Log("FamilyParamsHandler: «" + familyName + "» без изменений — без перезагрузки");
+            return "«" + familyName + "»: " + (nb.Count > 0 ? string.Join("; ", nb) : "нет изменений");
+        }
 
-                // Дубли семейства: если в проекте уже есть НЕСКОЛЬКО семейств с одним
-                // именем, LoadFamily предсказуемо обновить не может тот или иной —
-                // параметр «то появляется, то нет» (см. журналы). Предупреждаем заранее.
-                foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
-                {
-                    var f = e as Family;
-                    if (f != null && !string.IsNullOrEmpty(f.Name) &&
-                        string.Equals(f.Name, family.Name, StringComparison.OrdinalIgnoreCase)) sameName++;
-                }
-                if (sameName > 1)
-                    GrdLog.Log("FamilyParamsHandler: ВНИМАНИЕ: в проекте " + sameName +
-                               " семейств с именем «" + family.Name + "» — LoadFamily обновит одно из них," +
-                               " остальное(ые) останется без изменений. Рекомендуется удалить дубль.");
-
-                GrdLog.Log("FamilyParamsHandler: до LoadFamily семейств=" + beforeNames.Count +
-                           ": " + string.Join("; ", beforeNames));
-                using (var t = new Transaction(doc, "JTOOLS: параметры семейства «" + familyName + "»"))
-                {
-                    t.Start();
-                    try
-                    {
-                        // LoadFamily(Document, options) нельзя вызывать на модифицированном
-                        // документе семейства («The document must not be modifiable...»).
-                        // Поэтому сохраняем семейство во временный файл и загружаем по пути.
-                        // ВАЖНО: имя временного файла должно максимально совпадать с тем,
-                        // из какого файла семейство попало в проект (fdoc.PathName), иначе
-                        // Revit нагрузит семейство «как новое» по имени RFA-файла и создаст
-                        // семейство-дубль вместо замены существующего (см. Audytor_<guid>).
-                        tempPath = System.IO.Path.Combine(
-                            System.IO.Path.GetTempPath(),
-                            FamilyReloadFileName(fdoc, familyName));
-                        if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
-                        fdoc.SaveAs(tempPath, new SaveAsOptions());
-                        loaded = doc.LoadFamily(tempPath, loadOpts, out var loadedFamily);
-                        GrdLog.Log("FamilyParamsHandler: LoadFamily вернул " + loaded +
-                                   ", новое семейство: Name=" + (loadedFamily?.Name ?? "<null>") +
-                                   ", Id=" + loadedFamily?.Id);
-                        t.Commit();
-                    }
-                    catch
-                    {
-                        try { t.RollBack(); } catch { }
-                        throw;
-                    }
-                    finally
-                    {
-                        if (!string.IsNullOrEmpty(tempPath))
-                        {
-                            try
-                            {
-                                if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                if (!loaded)
-                    return "! «" + familyName + "»: LoadFamily вернул false";
-
-                // Возвращаем значения параметров со сменой привязки (см. CaptureBinding).
-                if (bindSnapshots.Count > 0)
-                {
-                    using (var rt = new Transaction(doc, "JTOOLS: восстановить значения параметров"))
-                    {
-                        try
-                        {
-                            rt.Start();
-                            foreach (var snap in bindSnapshots)
-                                RestoreBinding(doc, familyName, snap);
-                            rt.Commit();
-                        }
-                        catch (Exception ex)
-                        {
-                            try { if (rt.HasStarted()) rt.RollBack(); } catch { }
-                            GrdLog.Log("FamilyParamsHandler: restore «" + familyName + "» EXCEPTION: " + ex);
-                        }
-                    }
-                }
-
-                // Возвращаем значения параметров, перенесённых в семейство
-                // (см. CaptureValues/ParamValueSnapshot).
-                if (valueSnapshots.Count > 0)
-                {
-                    using (var vt = new Transaction(doc, "JTOOLS: восстановить значения параметров семейства"))
-                    {
-                        try
-                        {
-                            vt.Start();
-                            RestoreValues(doc, familyName, valueSnapshots);
-                            vt.Commit();
-                        }
-                        catch (Exception ex)
-                        {
-                            try { if (vt.HasStarted()) vt.RollBack(); } catch { }
-                            GrdLog.Log("FamilyParamsHandler: restore values «" + familyName + "» EXCEPTION: " + ex);
-                        }
-                    }
-                }
-
-                VerifyAfterLoad(doc, familyName, beforeNames, added);
+        // Снимаем текущие значения параметров со сменой привязки «экземпляр ↔ тип»:
+        // после LoadFamily Revit обнуляет их, и мы вернём их обратно (RestoreBinding).
+        // Момент важен: правки сделаны только в документе семейства, проект не тронут.
+        foreach (var op in workOps)
+        {
+            if (op == null || string.IsNullOrEmpty(op.Name)) continue;
+            if (!string.Equals(op.Status, "Изменить привязку", StringComparison.OrdinalIgnoreCase)) continue;
+            if (reboundNames.Contains(op.Name)) continue;
+            try
+            {
+                bindSnapshots.Add(CaptureBinding(doc, familyName, op.Name, wasInstance: !op.IsInstance));
             }
             catch (Exception ex)
             {
-                GrdLog.Log("FamilyParamsHandler: «" + familyName + "» EXCEPTION: " + ex);
-                return "! «" + familyName + "»: " + ex.Message;
+                GrdLog.Log("FamilyParamsHandler: capture «" + op.Name + "» EXCEPTION: " + ex);
             }
-            finally
+        }
+
+        // «Перенести в семейство» / добавление общего параметра, который СЕЙЧАС
+        // привязан к проекту: значения параметра лежат на экземплярах (или типах)
+        // в документе. Сохраняем их ДО перезагрузки семейства, после LoadFamily
+        // возвращаем обратно (иначе значения обнуляются).
+        foreach (var op in workOps)
+        {
+            if (op == null || string.IsNullOrEmpty(op.Name) || op.Remove) continue;
+            if (op.Source != ParamSourceKind.Shared) continue;
+            if (!string.Equals(op.Status, "Добавить", StringComparison.OrdinalIgnoreCase)) continue;
+            var binding = ProjectBindingFor(doc, family, op);
+            if (binding == null) continue;
+            valueSnapshots.AddRange(CaptureValues(doc, family, op.Name, binding));
+        }
+
+        // Дубли семейства: если в проекте уже есть НЕСКОЛЬКО семейств с одним
+        // именем, LoadFamily предсказуемо обновить не может тот или иной —
+        // параметр «то появляется, то нет» (см. журналы). Предупреждаем заранее.
+        foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
+        {
+            var f = e as Family;
+            if (f != null && !string.IsNullOrEmpty(f.Name) &&
+                string.Equals(f.Name, family.Name, StringComparison.OrdinalIgnoreCase)) sameName++;
+        }
+        if (sameName > 1)
+            GrdLog.Log("FamilyParamsHandler: ВНИМАНИЕ: в проекте " + sameName +
+                       " семейств с именем «" + family.Name + "» — LoadFamily обновит одно из них," +
+                       " остальное(ые) останется без изменений. Рекомендуется удалить дубль.");
+
+        // LoadFamily(Document, options) нельзя вызывать на модифицированном
+        // документе семейства («The document must not be modifiable...»).
+        // Поэтому сохраняем семейство во временный файл и загружаем по пути.
+        // ВАЖНО: имя временного файла должно максимально совпадать с тем,
+        // из какого файла семейство попало в проект (fdoc.PathName), иначе
+        // Revit нагрузит семейство «как новое» по имени RFA-файла и создаст
+        // семейство-дубль вместо замены существующего (см. Audytor_<guid>).
+        tempPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            FamilyReloadFileName(fdoc, familyName));
+        if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
+        fdoc.SaveAs(tempPath, new SaveAsOptions());
+        GrdLog.Log("FamilyParamsHandler: «" + familyName + "» сохранено во временный файл " + tempPath);
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("FamilyParamsHandler: «" + familyName + "» EXCEPTION: " + ex);
+        return "! «" + familyName + "»: " + ex.Message;
+    }
+    finally
+    {
+        try { fdoc.Dispose(); } catch { }
+    }
+
+    ready.TempPath = tempPath;
+    ready.SameName = sameName;
+    pending.Add(ready);
+    return null;
+}
+
+/// <summary>Список семейств, пропущенных при перезагрузке (см. CreateProblemSchedule).</summary>
+private sealed class ProblemCollector
+{
+    public readonly HashSet<string> FamilyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>Контекст перехвата сбоев перезагрузки: «вопросные» сбои (например,
+/// «Remove constraints») гасятся молча, чтобы не прерывать операцию диалогом.</summary>
+private sealed class LoadFailuresContext
+{
+    public bool SuppressedConstraint;
+}
+
+/// <summary>Перехватывает сбои транзакции LoadFamily: «вопросные» сбои (которые иначе
+/// показали бы нативный диалог Revit) преобразуются в тихий откат транзакции; обычные
+/// предупреждения пропускаются как есть (Continue — поведение Revit по умолчанию).</summary>
+private sealed class LoadFailuresPreprocessor : IFailuresPreprocessor
+{
+    private readonly LoadFailuresContext _ctx;
+    public LoadFailuresPreprocessor(LoadFailuresContext ctx) { _ctx = ctx; }
+
+    public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
+    {
+        if (_ctx.SuppressedConstraint) return FailureProcessingResult.Continue;
+        foreach (var msg in failuresAccessor.GetFailureMessages())
+        {
+            if (IsConstraintStyle(msg))
             {
-                try { fdoc.Dispose(); } catch { }
+                _ctx.SuppressedConstraint = true;
+                break;
+            }
+        }
+        // ProceedWithRollBack не показывает никаких диалогов — транзакция просто
+        // откатится, а операция повторит перезагрузку по одному семейству.
+        return _ctx.SuppressedConstraint ? FailureProcessingResult.ProceedWithRollBack
+                                         : FailureProcessingResult.Continue;
+    }
+
+    /// <summary>«Вопросный» сбой: перезагрузка требует вмешательства пользователя
+    /// («Remove constraints», отсоединение и т.п.). Опознаём по тексту описания —
+    /// заголовки таких диалогов остаются английскими даже в локализованном Revit,
+    /// поэтому ищем и английские, и русские корни.</summary>
+    private static bool IsConstraintStyle(FailureMessageAccessor fm)
+    {
+        try
+        {
+            var d = (fm.GetDescriptionText() ?? string.Empty) + " " +
+                    (fm.GetDefaultResolutionCaption() ?? string.Empty);
+            d = d.ToLowerInvariant();
+            return d.Contains("constraint")
+                || d.Contains("ограничен")
+                || d.Contains("разъед")
+                || d.Contains("unjoin")
+                || d.Contains("disconnect");
+        }
+        catch { return false; }
+    }
+}
+
+/// <summary>
+/// Пакетная перезагрузка подготовленных семейств: LoadFamily всех (плюс
+/// восстановление значений) выполняется в ОДНОЙ транзакции проекта — вместо
+/// отдельной транзакции на каждое семейство. При любом сбое транзакция целиком
+/// откатывается и каждое семейство перезагружается отдельно (изоляция ошибок).
+/// «Вопросные» сбои («Remove constraints» и т.п.) гасятся молча: такие семейства
+/// тихо пропускаются и собираются в <paramref name="problems"/> для отдельной
+/// спецификации.
+/// </summary>
+private static void LoadBatch(Document doc, List<ReadyFamily> pending, FamilyParamsResult result,
+    ProblemCollector problems)
+{
+    if (pending == null || pending.Count == 0) return;
+    var beforeNames = FamilyNames(doc);
+    bool anyLoaded = false;
+    bool needRollback = false;
+    var ctx = new LoadFailuresContext();
+
+    using (var t = new Transaction(doc, "JTOOLS: параметры семейств (загрузка)"))
+    {
+        try
+        {
+            var opts = t.GetFailureHandlingOptions();
+            opts.SetFailuresPreprocessor(new LoadFailuresPreprocessor(ctx));
+            t.SetFailureHandlingOptions(opts);
+        }
+        catch (Exception ex) { GrdLog.Log("LoadBatch: FailureHandlingOptions: " + ex.Message); }
+        t.Start();
+        try
+        {
+            foreach (var f in pending)
+            {
+                try
+                {
+                    bool loaded = doc.LoadFamily(f.TempPath, new FamilyLoadOptionsImpl(), out var loadedFamily);
+                    if (!loaded)
+                    {
+                        f.Error = "LoadFamily вернул false";
+                        continue;
+                    }
+                    f.LoadedFamilyName = loadedFamily?.Name ?? string.Empty;
+                    anyLoaded = true;
+                    foreach (var snap in f.BindSnapshots) RestoreBinding(doc, f.FamilyName, snap);
+                    RestoreValues(doc, f.FamilyName, f.ValueSnapshots);
+                }
+                catch (Exception ex)
+                {
+                    // Исключение означает частичную правку у этого семейства — откатим
+                    // всю пакетную транзакцию и повторим каждое семейство отдельно.
+                    needRollback = true;
+                    f.Error = ex.Message;
+                    GrdLog.Log("LoadBatch «" + f.FamilyName + "» EXCEPTION: " + ex);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            needRollback = true;
+            GrdLog.Log("LoadBatch EXCEPTION: " + ex);
+        }
+        finally
+        {
+            try
+            {
+                if (anyLoaded && !needRollback)
+                {
+                    if (t.Commit() != TransactionStatus.Committed) needRollback = true;
+                }
+                else t.RollBack();
+            }
+            catch { needRollback = true; }
+        }
+    }
+
+    if (needRollback)
+    {
+        // Пакет откачен целиком — каждое семейство в собственной транзакции.
+        // «Вопросные» семейства здесь тихо пропускаются (без диалогов).
+        foreach (var f in pending)
+        {
+            var line = LoadFamilySingle(doc, f, beforeNames, result, problems);
+            if (line == null) continue;
+            if (line.StartsWith("!")) result.Errors.Add(line);
+            else { result.AppliedFamilies++; result.Summary.Add(line); }
+        }
+        return;
+    }
+
+    DeleteTempFiles(pending);
+
+    foreach (var f in pending)
+    {
+        if (f.Error != null)
+        {
+            result.Errors.Add("! «" + f.FamilyName + "»: " + f.Error);
+            continue;
+        }
+        VerifyAfterLoad(doc, f.FamilyName, beforeNames, f.Added);
+        result.AppliedFamilies++;
+        result.Summary.Add(BuildFamilyLine(f));
+    }
+}
+
+/// <summary>Перезагружает одно семейство в собственной транзакции (путь отката
+/// пакетной нагрузки при сбое / изоляция ошибки конкретного семейства).
+/// «Вопросные» сбои («Remove constraints» и т.п.) гасятся молча: семейство
+/// в проекте не меняется, добавляется в <paramref name="problems"/> и получает
+/// строку-отчёт (возвращается null — применённым не считается).</summary>
+private static string LoadFamilySingle(Document doc, ReadyFamily f, List<string> beforeNames,
+    FamilyParamsResult result, ProblemCollector problems)
+{
+    bool loaded = false;
+    string tempPath = f.TempPath;
+    var ctx = new LoadFailuresContext();
+    try
+    {
+        using (var t = new Transaction(doc, "JTOOLS: параметры семейства «" + f.FamilyName + "»"))
+        {
+            try
+            {
+                var opts = t.GetFailureHandlingOptions();
+                opts.SetFailuresPreprocessor(new LoadFailuresPreprocessor(ctx));
+                t.SetFailureHandlingOptions(opts);
+            }
+            catch (Exception ex) { GrdLog.Log("LoadFamilySingle: FailureHandlingOptions: " + ex.Message); }
+            t.Start();
+            try
+            {
+                loaded = doc.LoadFamily(tempPath, new FamilyLoadOptionsImpl(), out var loadedFamily);
+                if (loaded)
+                {
+                    f.LoadedFamilyName = loadedFamily?.Name ?? string.Empty;
+                    foreach (var snap in f.BindSnapshots) RestoreBinding(doc, f.FamilyName, snap);
+                    RestoreValues(doc, f.FamilyName, f.ValueSnapshots);
+                }
+                t.Commit();
+            }
+            catch
+            {
+                try { t.RollBack(); } catch { }
+                throw;
+            }
+        }
+        if (ctx.SuppressedConstraint)
+        {
+            // Перезагрузка потребовала бы диалога Revit («Remove constraints») —
+            // тихо пропускаем: семейство в проекте остаётся прежним, а его экземпляры
+            // попадают в отдельную спецификацию для ручного разбора.
+            problems?.FamilyNames.Add(f.FamilyName);
+            result?.Summary.Add("«" + f.FamilyName + "»: ПРОПУЩЕНО (перезагрузка требует действий Revit) — " +
+                "список — в спецификации «JTOOLS: перезагрузка…»");
+            return null;
+        }
+        if (!loaded) return "! «" + f.FamilyName + "»: LoadFamily вернул false";
+        VerifyAfterLoad(doc, f.FamilyName, beforeNames, f.Added);
+        return BuildFamilyLine(f);
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("FamilyParamsHandler: перезагрузка «" + f.FamilyName + "» EXCEPTION: " + ex);
+        return "! «" + f.FamilyName + "»: " + ex.Message;
+    }
+    finally
+    {
+        DeleteTempFile(tempPath);
+    }
+}
+
+/// <summary>Создаёт спецификацию с семействами, пропущенными при перезагрузке, и
+/// открывает её. Параметр-метка («JTOOLS: перезагрузка — пропущено») создаётся
+/// плагином как общий параметр экземпляра и привязывается к категориям проблемных
+/// семейств; по нему спецификации фильтруются штатными средствами Revit
+/// (Properties → «Фильтры» пользователь увидит этот параметр).</summary>
+private static void CreateProblemSchedule(UIApplication app, Document doc, ProblemCollector problems)
+{
+    try
+    {
+        if (app == null || doc == null || problems == null || problems.FamilyNames.Count == 0) return;
+
+        // Категории проблемных семейств — для привязки параметра и создания таблиц.
+        var cats = new SortedDictionary<long, Category>();
+        foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(FamilySymbol)))
+        {
+            var sym = e as FamilySymbol;
+            if (sym?.Family == null || string.IsNullOrEmpty(sym.Family.Name)) continue;
+            if (!problems.FamilyNames.Contains(sym.Family.Name)) continue;
+            if (sym.Category != null) cats[sym.Category.Id.Value] = sym.Category;
+        }
+        if (cats.Count == 0)
+        {
+            GrdLog.Log("CreateProblemSchedule: категорий проблемных семейств не найдено");
+            return;
+        }
+
+        var catSet = doc.Application.Create.NewCategorySet();
+        foreach (var c in cats.Values) catSet.Insert(c);
+
+        using (var t = new Transaction(doc, "JTOOLS: параметр-метка и спецификация перезагрузки"))
+        {
+            t.Start();
+            var def = EnsureMarkerDefinition(app, doc, catSet);
+            if (def == null)
+            {
+                t.RollBack();
+                return;
             }
 
-            var parts = new List<string>();
-            if (added.Count > 0) parts.Add("добавлено: " + string.Join(", ", added));
-            if (already.Count > 0) parts.Add("уже есть: " + string.Join(", ", already));
-            if (removed.Count > 0) parts.Add("удалено: " + string.Join(", ", removed));
-            if (skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", skipped));
-            if (rebound.Count > 0) parts.Add("смена привязки (проект): " + string.Join(", ", rebound));
-            if (sameName > 1)
-                parts.Add("ПРЕДУПРЕЖДЕНИЕ: в проекте " + sameName +
-                          " семейства с именем «" + familyName + "» (дубликат) — перезагружено одно." +
-                          " Удалите дубль через «Управление семействами/Реторт», иначе результат может потеряться.");
-            return "«" + familyName + "»: " + (parts.Count > 0 ? string.Join("; ", parts) : "нет изменений");
+            // Ставим значение-метку на экземпляры проблемных семейств, чтобы фильтр
+            // штатной спецификации отобрал ровно их; попутно берём id параметра.
+            ElementId markerId = ElementId.InvalidElementId;
+            foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)))
+            {
+                var inst = e as FamilyInstance;
+                if (inst?.Symbol?.Family == null || string.IsNullOrEmpty(inst.Symbol.Family.Name)) continue;
+                if (!problems.FamilyNames.Contains(inst.Symbol.Family.Name)) continue;
+                var p = inst.LookupParameter(def.Name);
+                if (p == null) continue;
+                try { p.Set(1.0); }
+                catch (Exception ex) { GrdLog.Log("CreateProblemSchedule: значение-метка: " + ex.Message); }
+                if (markerId == ElementId.InvalidElementId) markerId = p.Id;
+            }
+            if (markerId == ElementId.InvalidElementId)
+            {
+                // Экземпляров проблемных семейств в проекте нет — привязку оставляем,
+                // спецификацию не создаём (фильтровать было бы нечего).
+                GrdLog.Log("CreateProblemSchedule: экземпляров проблемных семейств не найдено, " +
+                           "спецификация не создана (параметр «" + def.Name + "» привязан)");
+                t.Commit();
+                return;
+            }
+
+            // Спецификация на каждую категорию (имя — случайное), фильтр по параметру-метке.
+            var baseName = "JTOOLS: перезагрузка «пропущено» " +
+                Guid.NewGuid().ToString("N").Substring(0, 5).ToUpperInvariant();
+            ViewSchedule first = null;
+            foreach (var c in cats.Values)
+            {
+                try
+                {
+                    var sched = ViewSchedule.CreateSchedule(doc, c.Id);
+                    sched.Name = baseName + " — " + c.Name;
+                    var field = sched.Definition.AddField(ScheduleFieldType.Instance, markerId);
+                    sched.Definition.AddFilter(new ScheduleFilter(field.FieldId, ScheduleFilterType.Equal, 1.0));
+                    if (first == null) first = sched;
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("CreateProblemSchedule: спецификация «" + c.Name + "» EXCEPTION: " + ex.Message);
+                }
+            }
+
+            if (t.Commit() != TransactionStatus.Committed) t.RollBack();
+
+            if (first != null && first.IsValidObject)
+            {
+                // Сразу открываем спецификацию для разбора пропущенных семейств.
+                try { app.ActiveUIDocument?.RequestViewChange(first); }
+                catch (Exception ex) { GrdLog.Log("CreateProblemSchedule: RequestViewChange: " + ex.Message); }
+            }
         }
+
+        GrdLog.Log("CreateProblemSchedule: пропущены: " + string.Join("; ", problems.FamilyNames));
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("CreateProblemSchedule EXCEPTION: " + ex);
+    }
+}
+
+/// <summary>Гарантирует наличие общего параметра-метки и его привязки к
+/// <paramref name="catSet"/>. Возвращает определение параметра (null при неудаче).
+/// Если параметр уже создан ранее и привязка покрывает нужные категории —
+/// переиспользуется, иначе создаётся новое определение «по внутренней логике плагина».</summary>
+private static ExternalDefinition EnsureMarkerDefinition(UIApplication app, Document doc, CategorySet catSet)
+{
+    try
+    {
+        const string groupName = "JTOOLS";
+        const string baseName = "JTOOLS: перезагрузка — пропущено";
+
+        var file = OpenOrCreateSharedFile(app);
+        if (file == null) return null;
+
+        var group = file.Groups.get_Item(groupName) ?? file.Groups.Create(groupName);
+
+        var existing = group.Definitions.get_Item(baseName) as ExternalDefinition;
+        if (existing != null)
+        {
+            var binding = doc.ParameterBindings.get_Item(existing) as InstanceBinding;
+            if (binding != null)
+            {
+                if (CategoriesCovered(binding, catSet)) return existing;
+                // Определение уже привязано, но не ко всем нужным категориям —
+                // ниже создаём дополнительное определение со своим именем.
+            }
+            else
+            {
+                // Определение есть, но не привязано в проекте — привязываем.
+                doc.ParameterBindings.Insert(existing, new InstanceBinding(catSet));
+                return existing;
+            }
+        }
+
+        // Создаём определение (число-метку), с гарантией уникальности имени.
+        string name = baseName;
+        int n = 2;
+        while (group.Definitions.get_Item(name) != null) name = baseName + " (" + (n++) + ")";
+        var def = group.Definitions.Create(new ExternalDefinitionCreationOptions(name, SpecTypeId.Number)
+        {
+            Description = "JTOOLS: семейства, пропущенные при пакетной перезагрузке параметров"
+        }) as ExternalDefinition;
+        if (def == null) return null;
+
+        doc.ParameterBindings.Insert(def, new InstanceBinding(catSet));
+        return def;
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("EnsureMarkerDefinition EXCEPTION: " + ex);
+        return null;
+    }
+}
+
+/// <summary>True, если привязка <paramref name="binding"/> покрывает все категории
+/// из <paramref name="needed"/>.</summary>
+private static bool CategoriesCovered(InstanceBinding binding, CategorySet needed)
+{
+    try
+    {
+        if (binding == null || needed == null) return false;
+        foreach (Category c in needed)
+        {
+            bool found = false;
+            foreach (Category bc in binding.Categories)
+            {
+                if (bc.Id == c.Id) { found = true; break; }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+    catch { return false; }
+}
+
+/// <summary>Возвращает файл общих параметров для параметра-метки: использует файл
+/// текущего сеанса (Settings.LastSharedParamsPath), при отсутствии — создаёт свой
+/// во временной папке.</summary>
+private static DefinitionFile OpenOrCreateSharedFile(UIApplication app)
+{
+    try
+    {
+        string path = app.Application.SharedParametersFilename;
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+            path = RevitContext.Settings.LastSharedParamsPath;
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+        {
+            path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "JTOOLS_SharedParams_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".txt");
+            try { System.IO.File.WriteAllBytes(path, System.Text.Encoding.UTF8.GetPreamble()); }
+            catch { return null; }
+        }
+        app.Application.SharedParametersFilename = path;
+        return app.Application.OpenSharedParameterFile();
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("OpenOrCreateSharedFile EXCEPTION: " + ex);
+        return null;
+    }
+}
+
+/// <summary>
+/// True, если общий параметр со статусом «Добавить» уже привязан к категории
+/// семейства в проекте (BindingMap) тем же способом (тип/экземпляр): элементы
+/// семейства параметр уже имеют, вшивать его в семейство не нужно.
+/// </summary>
+private static bool AlreadyCoveredByProjectBinding(Document doc, Family family, FamilyParamOp op)
+{
+    try
+    {
+        if (op == null || op.Remove) return false;
+        if (op.Source != ParamSourceKind.Shared) return false;
+        if (!string.Equals(op.Status, "Добавить", StringComparison.OrdinalIgnoreCase)) return false;
+        var binding = ProjectBindingFor(doc, family, op);
+        if (binding == null) return false;
+        return (binding is InstanceBinding) == op.IsInstance;
+    }
+    catch (Exception ex)
+    {
+        GrdLog.Log("FamilyParamsHandler.AlreadyCoveredByProjectBinding EXCEPTION: " + ex);
+        return false;
+    }
+}
+
+/// <summary>Семейство, подготовленное к перезагрузке (SaveAs во временный файл
+/// уже выполнен). LoadBatch загружает такие семейства пакетом.</summary>
+private sealed class ReadyFamily
+{
+    public string FamilyName;
+    public int SameName;
+    public string TempPath;
+    public string LoadedFamilyName = string.Empty;
+    public string Error;                       // ошибка этого семейства при пакетной загрузке
+    public readonly List<string> Added = new List<string>();
+    public readonly List<string> Removed = new List<string>();
+    public readonly List<string> Skipped = new List<string>();
+    public readonly List<string> Already = new List<string>();
+    public readonly List<string> Rebound = new List<string>();
+    public readonly HashSet<string> ReboundNamesSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    public readonly List<BindingSnapshot> BindSnapshots = new List<BindingSnapshot>();
+    public readonly List<ParamValueSnapshot> ValueSnapshots = new List<ParamValueSnapshot>();
+}
+
+/// <summary>Строка итогового отчёта по перезагруженному семейству.</summary>
+private static string BuildFamilyLine(ReadyFamily f)
+{
+    var parts = new List<string>();
+    if (f.Added.Count > 0) parts.Add("добавлено: " + string.Join(", ", f.Added));
+    if (f.Already.Count > 0) parts.Add("уже есть: " + string.Join(", ", f.Already));
+    if (f.Removed.Count > 0) parts.Add("удалено: " + string.Join(", ", f.Removed));
+    if (f.Skipped.Count > 0) parts.Add("пропущено: " + string.Join(", ", f.Skipped));
+    if (f.Rebound.Count > 0) parts.Add("смена привязки (проект): " + string.Join(", ", f.Rebound));
+    if (f.SameName > 1)
+        parts.Add("ПРЕДУПРЕЖДЕНИЕ: в проекте " + f.SameName +
+                  " семейства с именем «" + f.FamilyName + "» (дубликат) — перезагружено одно." +
+                  " Удалите дубль через «Управление семействами/Реторт», иначе результат может потеряться.");
+    return "«" + f.FamilyName + "»: " + (parts.Count > 0 ? string.Join("; ", parts) : "нет изменений");
+}
+
+private static void DeleteTempFile(string tempPath)
+{
+    if (string.IsNullOrEmpty(tempPath)) return;
+    try { if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath); } catch { }
+}
+
+private static void DeleteTempFiles(List<ReadyFamily> pending)
+{
+    if (pending == null) return;
+    foreach (var f in pending) DeleteTempFile(f.TempPath);
+}
 
         /// <summary>
         /// Операция «снять формулу»: у заданного параметра убирается формула во всех

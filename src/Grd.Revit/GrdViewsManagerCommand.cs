@@ -36,6 +36,7 @@ namespace GrdRevit
                 if (_window == null || !_window.IsVisible)
                 {
                     var window = new ViewsManagerWindow();
+                    window.SetDocKey(Revit.DocKeys.Get(doc));
                     window.Closed += (s, e) => _window = null;
 
                     try
@@ -55,8 +56,8 @@ namespace GrdRevit
                 }
                 else
                 {
-                    _window.Activate();
-                    GrdLog.Log("VM1b: окно активировано");
+                    _window.RestoreWithFocus();
+                    GrdLog.Log("VM1b: окно активировано, фокус возвращён в поле поиска");
                 }
 
                 GrdLog.Log("VM2: succeeded in " + sw.ElapsedMilliseconds + " ms");
