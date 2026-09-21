@@ -258,12 +258,15 @@ namespace GrdRevit.Ui
         }
 
         /// <summary>Клавиши на уровне окна: Esc — закрыть окно (по желанию пользователя),
-        /// Ctrl+F — вернуть курсор в поле поиска, а ▲▼/Home/End — навигация по списку
+        /// Ctrl+K — вернуть курсор в поле поиска, а ▲▼/Home/End — навигация по списку
         /// видов/листов из любого места (поле поиска, таблица, фильтры, кнопки).
         /// Перехват на уровне окна перехватывает стрелку раньше, чем её попытается
         /// обработать системная навигация по фокусируемым элементам, поэтому выделение
         /// никогда не «уходит» на кнопки и радио-кнопки окна. Во время правки ячейки
-        /// таблицы стрелками управляет поле ввода — не вмешиваемся.</summary>
+        /// таблицы стрелками управляет поле ввода — не вмешиваемся.
+        /// Ctrl+K, а не Ctrl+F: Ctrl+F перехватывает сам Revit (его «Найти/поиск») ещё
+        /// до того, как клавиша дойдёт до WPF-окна, и Revit закрывает моделесс-диалог.
+        /// </summary>
         private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
             try
@@ -275,7 +278,7 @@ namespace GrdRevit.Ui
                     return;
                 }
 
-                if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+                if (e.Key == Key.K && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
                 {
                     FocusSearch();
                     e.Handled = true;
@@ -358,14 +361,14 @@ namespace GrdRevit.Ui
         }
 
         /// <summary>Клавиатура в сетке: Enter — открыть выбранный вид (если не идёт
-        /// правка ячейки), а Ctrl+F — дублирующий возврат курсора в поле поиска
+        /// правка ячейки), а Ctrl+K — дублирующий возврат курсора в поле поиска
         /// (основной перехват — на уровне окна). Стрелки и Home/End обрабатываются
         /// на уровне окна (см. OnWindowPreviewKeyDown).</summary>
         private void OnGridKeyDown(object sender, KeyEventArgs e)
         {
             try
             {
-                if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+                if (e.Key == Key.K && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
                 {
                     FocusSearch();
                     e.Handled = true;

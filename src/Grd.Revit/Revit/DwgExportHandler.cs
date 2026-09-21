@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
@@ -57,10 +58,11 @@ namespace GrdRevit.Revit
     }
 
     /// <summary>
-    /// Экспорт выбранных листов или видов в один DWG-файл (каждый элемент становится
-    /// отдельным layout в файле, MergedViews). Моделесс-окно не может обращаться
-    /// к API напрямую, поэтому запросы выполняются Revit-потоком через ExternalEvent.
-    /// Чтение списков и экспорт выполняются за один заход в API-потоке.
+    /// Экспорт в DWG. Листы: выбранные листы — в ОДИН DWG-файл, где каждый лист
+    /// становится отдельным layout (MergedViews). Виды: КАЖДЫЙ выбранный вид — в
+    /// отдельный DWG-файл с именем «префикс + имя вида». Моделесс-окно не может
+    /// обращаться к API напрямую, поэтому запросы выполняются Revit-потоком через
+    /// ExternalEvent. Чтение списков и экспорт выполняются за один заход в API-потоке.
     /// </summary>
     public class DwgExportHandler : IExternalEventHandler
     {
@@ -74,6 +76,7 @@ namespace GrdRevit.Revit
             public Kind Kind;
             public List<long> Ids;
             public string TargetPath;
+            public string Prefix = string.Empty;
             public Action<SheetListResult> SheetListCallback;
             public Action<ViewExportListResult> ViewListCallback;
             public Action<DwgExportProgress> ExportCallback;
@@ -108,8 +111,8 @@ namespace GrdRevit.Revit
                 });
         }
 
-        /// <summary>Экспорт выбранных видов в один DWG-файл.</summary>
-        public void QueueExportViews(List<long> viewIds, string targetPath,
+        /// <summary>Экспорт выбранных видов: каждый вид — отдельный DWG-файл.</summary>
+        public void QueueExportViews(List<long> viewIds, string targetFolder, string prefix,
                                      Action<DwgExportProgress> callback)
         {
             lock (_sync)
@@ -117,7 +120,8 @@ namespace GrdRevit.Revit
                 {
                     Kind = Kind.ExportViews,
                     Ids = viewIds,
-                    TargetPath = targetPath,
+                    TargetPath = targetFolder,
+                    Prefix = prefix ?? string.Empty,
                     ExportCallback = callback
                 });
         }
@@ -153,7 +157,7 @@ namespace GrdRevit.Revit
                             req.ExportCallback?.Invoke(ExportElementIds(app, req.Ids, req.TargetPath, "Листы"));
                             break;
                         case Kind.ExportViews:
-                            req.ExportCallback?.Invoke(ExportElementIds(app, req.Ids, req.TargetPath, "Виды"));
+                            req.ExportCallback?.Invoke(ExportViewsEach(app, req.Ids, req.TargetPath, req.Prefix, "Виды"));
                             break;
                     }
                 }
@@ -367,6 +371,142 @@ namespace GrdRevit.Revit
                 GrdLog.Log("DwgExportHandler.ExportElementIds EXCEPTION: " + ex);
                 return Done("Ошибка экспорта DWG: " + ex.Message);
             }
+        }
+
+        /// <summary>Экспорт отмеченных ВИДОВ: каждый вид сохраняется в ОТДЕЛЬНЫЙ
+        /// DWG-файл в выбранной папке с именем «префикс + имя вида» (MergedViews=false,
+        /// по одному виду за раз). Запрещённые в имени файла символы заменяются на '_'.</summary>
+        private static DwgExportProgress ExportViewsEach(UIApplication app, List<long> ids, string targetDir, string prefix, string defaultBaseName)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(targetDir)) return Done("Не задана папка для DWG.");
+                if (ids == null || ids.Count == 0) return Done("Ничего не выбрано для экспорта.");
+
+                var doc = app?.ActiveUIDocument?.Document;
+                if (doc == null) return Done("Нет активного документа Revit.");
+
+                var views = new List<View>();
+                foreach (var id in ids)
+                {
+                    var v = doc.GetElement(new ElementId(id)) as View;
+                    if (v == null || v is ViewSheet) continue;
+                    views.Add(v);
+                }
+                if (views.Count == 0) return Done("Выбранные виды не найдены в документе.");
+
+                var dir = Path.GetFullPath(targetDir);
+                if (!Directory.Exists(dir))
+                {
+                    try { Directory.CreateDirectory(dir); }
+                    catch { return Done("Не удалось создать папку: " + dir); }
+                }
+
+                var tmp = Path.Combine(Path.GetTempPath(), "GrdRevitViewDwg_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tmp);
+
+                var options = new DWGExportOptions
+                {
+                    MergedViews = false,
+                    FileVersion = ACADVersion.R2018,
+                    Colors = ExportColorMode.TrueColor,
+                    TextTreatment = TextTreatment.Exact,
+                    HideScopeBox = true,
+                    HideReferencePlane = true
+                };
+
+                var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var failed = new List<string>();
+                var done = 0;
+                try
+                {
+                    foreach (var v in views)
+                    {
+                        var fileBase = SanitizeFileName(prefix + v.Name);
+                        if (string.IsNullOrWhiteSpace(fileBase))
+                            fileBase = SanitizeFileName(defaultBaseName + "_" + v.Name);
+                        if (used.Contains(fileBase)) fileBase += "_" + v.Id.Value;
+                        used.Add(fileBase);
+
+                        var before = new HashSet<string>(
+                            Directory.GetFiles(tmp, "*.dwg").Select(Path.GetFullPath),
+                            StringComparer.OrdinalIgnoreCase);
+
+                        try
+                        {
+                            doc.Export(tmp, fileBase, new List<ElementId> { v.Id }, options);
+                        }
+                        catch (Exception ex)
+                        {
+                            GrdLog.Log("DwgExportHandler.ExportViewsEach: вид «" + v.Name + "» EXCEPTION: " + ex.Message);
+                            failed.Add(v.Name);
+                            continue;
+                        }
+
+                        var produced = Directory.GetFiles(tmp, "*.dwg").Select(Path.GetFullPath)
+                            .FirstOrDefault(f => !before.Contains(f));
+                        if (string.IsNullOrEmpty(produced))
+                        {
+                            failed.Add(v.Name);
+                            continue;
+                        }
+
+                        var dest = Path.Combine(dir, fileBase + ".dwg");
+                        try { if (File.Exists(dest)) File.Delete(dest); } catch { }
+                        File.Move(produced, dest);
+                        done++;
+                    }
+                }
+                finally
+                {
+                    try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
+                }
+
+                GrdLog.Log("DwgExportHandler.ExportViewsEach: файлов=" + done + ", папка=" + dir +
+                          (failed.Count > 0 ? ", пропущено=" + failed.Count : ""));
+                if (done == 0)
+                    return new DwgExportProgress
+                    {
+                        Done = 0,
+                        Total = views.Count,
+                        Finished = true,
+                        Error = "Revit не создал ни одного DWG-файла. Проверьте, что виды пригодны для экспорта."
+                    };
+
+                var error = failed.Count > 0
+                    ? "Экспортировано " + done + " из " + views.Count + ". Не создано: " + string.Join("; ", failed) + "."
+                    : string.Empty;
+                return new DwgExportProgress
+                {
+                    Done = done,
+                    Total = views.Count,
+                    Finished = true,
+                    ResultPath = dir,
+                    Error = error
+                };
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("DwgExportHandler.ExportViewsEach EXCEPTION: " + ex);
+                return Done("Ошибка экспорта DWG: " + ex.Message);
+            }
+        }
+
+        /// <summary>Имя файла из имени вида: запрещённые символы на '_', ограничение длины.</summary>
+        private static string SanitizeFileName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+            var invalid = new HashSet<char>(Path.GetInvalidFileNameChars());
+            var sb = new StringBuilder(name.Length);
+            for (var i = 0; i < name.Length; i++)
+            {
+                var c = name[i];
+                if (c == '\t' || c == '\n' || c == '\r') continue;
+                sb.Append(invalid.Contains(c) ? '_' : c);
+            }
+            var s = sb.ToString().Trim().Trim('.', ' ');
+            if (s.Length > 150) s = s.Substring(0, 150);
+            return s;
         }
 
         private static DwgExportProgress Done(string error)

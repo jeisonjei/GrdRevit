@@ -16,14 +16,26 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- Bundle the plugin assemblies built for each Revit flavour -->
+  <!-- Bundle the plugin assemblies built for each Revit flavour.
+       Плагин успешно работает ТОЛЬКО со всем набором зависимостей: PdfSharp,
+       System.*, Microsoft.Extensions.* и deps.json (net8). Встраиваем все файлы
+       сборки bin\Release\<tfm> с префиксом логического имени по флэйверу, чтобы
+       net48- и net8-флэйверы не конфликтовали. GrdRevit.dll и GrdRevit.Core.dll
+       встроены отдельно под каноническими именами (без «GrdRevit.» после префикса).
+       Список зависимостей автоматически обновится при появлении новых DLL в bin. -->
   <ItemGroup Condition="Exists('..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.dll')">
     <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.dll" LogicalName="GrdInstaller.Revit2024.dll" />
     <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.Core.dll" LogicalName="GrdInstaller.Revit2024.Core.dll" />
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net48\*"
+                      Exclude="..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.dll;..\..\src\Grd.Revit\bin\Release\net48\GrdRevit.Core.dll;**\*.pdb;**\*.xml"
+                      LogicalName="GrdInstaller.Revit2024.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup Condition="Exists('..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.dll')">
     <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.dll" LogicalName="GrdInstaller.Revit2026.dll" />
     <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.Core.dll" LogicalName="GrdInstaller.Revit2026.Core.dll" />
+    <EmbeddedResource Include="..\..\src\Grd.Revit\bin\Release\net8.0-windows\*"
+                      Exclude="..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.dll;..\..\src\Grd.Revit\bin\Release\net8.0-windows\GrdRevit.Core.dll;**\*.pdb;**\*.xml"
+                      LogicalName="GrdInstaller.Revit2026.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

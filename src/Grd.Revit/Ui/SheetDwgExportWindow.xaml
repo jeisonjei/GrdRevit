@@ -38,9 +38,19 @@
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="ExportBtn" Content="Экспорт в DWG" Click="OnExport" Padding="16,6"
                         Style="{StaticResource PrimaryButtonStyle}" IsEnabled="False"
-                        ToolTip="Сохранить отмеченные элементы (листы или виды) в один DWG-файл."/>
+                        ToolTip="Сохранить отмеченные элементы (листы или виды) в DWG: листы — в один файл (каждый лист — layout), виды — отдельным файлом на каждый вид."/>
                 <TextBlock x:Name="PercentText" Margin="12,0,0,0" VerticalAlignment="Center"
                            MinWidth="46" TextAlignment="Right" FontWeight="SemiBold"/>
+            </StackPanel>
+            <StackPanel x:Name="PrefixPanel" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
+                <TextBlock Text="Префикс имени файла:" VerticalAlignment="Center" Margin="2,0,6,0"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBox x:Name="PrefixBox" Width="220" Padding="4,3"
+                         Text="Виды_"
+                         ToolTip="Префикс добавляется к имени каждого файла DWG: «префикс + имя вида». Пример: префикс «ВЦ_» и вид «План этажа 1» → «ВЦ_План этажа 1.dwg». Поле пустое — файл называется просто именем вида."/>
+                <TextBlock Text="виды сохраняются в один файл DWG каждый" Margin="10,0,0,0"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
             </StackPanel>
             <ProgressBar x:Name="Progress" Height="18" Margin="0,6,0,0" Minimum="0" Maximum="1" Value="0"/>
             <TextBlock x:Name="StatusText" Margin="2,4,0,0" TextWrapping="Wrap"

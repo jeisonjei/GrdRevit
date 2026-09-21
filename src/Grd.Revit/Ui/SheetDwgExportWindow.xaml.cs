@@ -13,8 +13,9 @@ namespace GrdRevit.Ui
 {
     /// <summary>
     /// Окно «Экспорт в DWG»: список листов или видов проекта с галочками (переключатель
-    /// «Листы / Виды»). Выбранные элементы экспортируются в один DWG-файл, где каждый
-    /// элемент становится отдельным layout (MergedViews). Экспорт выполняется в потоке
+    /// «Листы / Виды»). Листы — в один DWG-файл, где каждый лист становится отдельным
+    /// layout (MergedViews); виды — КАЖДЫЙ в отдельный DWG-файл с именем «префикс + имя
+    /// вида» (поле префикса появляется в режиме «Виды»). Экспорт выполняется в потоке
     /// Revit через ExternalEvent, окно — моделессое и к API напрямую не обращается.
     /// Есть избранные элементы (★): для листов они общие с окном «Печать в PDF»,
     /// для видов — с окном «Управляющий видами»; последний путь сохранения запоминается.
@@ -158,9 +159,11 @@ namespace GrdRevit.Ui
             if (HintText != null)
             {
                 HintText.Text = views
-                    ? "Отметьте виды и нажмите «Экспорт в DWG» — выбранные виды (планы, разрезы, фасады, 3D, узлы) сохраняются в один DWG-файл, где каждый вид становится отдельным layout. Последний путь сохранения запоминается. Звёздочка ★ отмечает избранные виды — они общие с окном «Управляющий видами»."
+                    ? "Отметьте виды и нажмите «Экспорт в DWG»: каждый выбранный вид (план, разрез, фасад, 3D, узел) сохраняется в отдельный DWG-файл в выбранной папке с именем «префикс + имя вида». Нажмите «Экспорт в DWG» и укажите папку. Звёздочка ★ отмечает избранные виды — они общие с окном «Управляющий видами»."
                     : "Отметьте листы и нажмите «Экспорт в DWG» — выбранные листы сохраняются в один DWG-файл, где каждый лист становится отдельным layout. Последний путь сохранения запоминается. Звёздочка ★ отмечает избранные листы — они общие с окном «Печать в PDF».";
             }
+            if (PrefixPanel != null)
+                PrefixPanel.Visibility = views ? Visibility.Visible : Visibility.Collapsed;
             if (SourceStatus != null)
             {
                 var master = CurrentMaster();
@@ -261,6 +264,7 @@ namespace GrdRevit.Ui
             OnlyFavCheck.IsEnabled = !busy;
             RbSheets.IsEnabled = !busy;
             RbViews.IsEnabled = !busy;
+            if (PrefixBox != null) PrefixBox.IsEnabled = !busy;
         }
 
         private void OnSearchChanged(object sender, TextChangedEventArgs e)
@@ -310,49 +314,56 @@ namespace GrdRevit.Ui
                 return;
             }
 
-            var dlg = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = views
-                    ? "Экспорт видов в DWG (каждый вид — отдельный layout)"
-                    : "Экспорт листов в DWG (каждый лист — отдельный layout)",
-                Filter = "DWG (*.dwg)|*.dwg",
-                DefaultExt = ".dwg",
-                AddExtension = true,
-                FileName = views ? "Виды.dwg" : "Листы.dwg",
-                OverwritePrompt = true
-            };
-
             var last = RevitContext.Settings.SheetDwgExportPath;
-            if (!string.IsNullOrEmpty(last) && File.Exists(last))
+            string lastDir = null;
+            if (!string.IsNullOrEmpty(last))
             {
-                dlg.InitialDirectory = Path.GetDirectoryName(last);
-                dlg.FileName = Path.GetFileName(last);
+                if (File.Exists(last)) lastDir = Path.GetDirectoryName(last);
+                else if (Directory.Exists(last)) lastDir = last;
             }
-            else
-            {
-                dlg.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            }
-
-            if (dlg.ShowDialog() != true) return;
-
-            _targetPath = dlg.FileName;
-            _targetCount = ids.Count;
-            _targetViews = views;
+            if (string.IsNullOrEmpty(lastDir))
+                lastDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
             try
             {
-                SetBusy(true);
-                Progress.Minimum = 0;
-                Progress.Maximum = ids.Count;
-                Progress.Value = 0;
-                PercentText.Text = "0 %";
-                StatusText.Text = views ? "Экспорт видов…" : "Экспорт…";
-
                 if (views)
-                    handler.QueueExportViews(ids, _targetPath, OnProgress);
+                {
+                    _targetPath = PickViewsExportFolder(lastDir);
+                    if (_targetPath == null) return;
+                    _targetCount = ids.Count;
+                    _targetViews = true;
+
+                    StartBusyProgress("Экспорт видов…");
+                    handler.QueueExportViews(ids, _targetPath, PrefixBox?.Text ?? string.Empty, OnProgress);
+                    ev.Raise();
+                }
                 else
+                {
+                    var dlg = new Microsoft.Win32.SaveFileDialog
+                    {
+                        Title = "Экспорт листов в DWG (каждый лист — отдельный layout)",
+                        Filter = "DWG (*.dwg)|*.dwg",
+                        DefaultExt = ".dwg",
+                        AddExtension = true,
+                        FileName = "Листы.dwg",
+                        OverwritePrompt = true,
+                        InitialDirectory = lastDir
+                    };
+                    if (File.Exists(last))
+                    {
+                        dlg.InitialDirectory = Path.GetDirectoryName(last);
+                        dlg.FileName = Path.GetFileName(last);
+                    }
+                    if (dlg.ShowDialog() != true) return;
+
+                    _targetPath = dlg.FileName;
+                    _targetCount = ids.Count;
+                    _targetViews = false;
+
+                    StartBusyProgress("Экспорт листов…");
                     handler.QueueExportSheets(ids, _targetPath, OnProgress);
-                ev.Raise();
+                    ev.Raise();
+                }
             }
             catch (Exception ex)
             {
@@ -360,6 +371,37 @@ namespace GrdRevit.Ui
                 GrdLog.Log("SheetDwgExportWindow.OnExport EXCEPTION: " + ex);
                 StatusText.Text = "Не удалось запустить экспорт: " + ex.Message;
             }
+        }
+
+        /// <summary>Виды: диалог выбора папки (SaveFileDialog используется только ради
+        /// папки; имя файла игнорируется — оно формируется из префикса и имени вида).
+        /// Возвращает папку или null, если пользователь отменил выбор.</summary>
+        private string PickViewsExportFolder(string lastDir)
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Виды: выберите папку — каждый вид в отдельный файл .dwg",
+                Filter = "DWG (*.dwg)|*.dwg",
+                DefaultExt = ".dwg",
+                AddExtension = true,
+                FileName = "Виды.dwg",
+                OverwritePrompt = false,
+                InitialDirectory = lastDir
+            };
+            if (dlg.ShowDialog() != true) return null;
+            var folder = Path.GetDirectoryName(dlg.FileName);
+            if (string.IsNullOrEmpty(folder)) folder = lastDir;
+            return folder;
+        }
+
+        private void StartBusyProgress(string status)
+        {
+            SetBusy(true);
+            Progress.Minimum = 0;
+            Progress.Maximum = Math.Max(1, _targetCount);
+            Progress.Value = 0;
+            PercentText.Text = "0 %";
+            StatusText.Text = status;
         }
 
         /// <summary>Итог экспорта приходит по завершении (в потоке Revit).</summary>
@@ -388,9 +430,14 @@ namespace GrdRevit.Ui
                 return;
             }
 
-            RevitContext.Settings.SheetDwgExportPath = _targetPath;
+            // Запоминаем папку/файл для следующего раза: для видов — папку плюс
+            // «Виды.dwg» (из папки берётся только каталог), для листов — полный путь файла.
+            RevitContext.Settings.SheetDwgExportPath = _targetViews
+                ? Path.Combine(_targetPath, "Виды.dwg")
+                : _targetPath;
             try { RevitContext.SaveSettings(); } catch (Exception ex) { GrdLog.Log("SheetDwgExportWindow.SaveSettings EXCEPTION " + ex); }
-            StatusText.Text = (_targetViews ? "Видов экспортировано: " : "Листов экспортировано: ") + _targetCount + " → " + _targetPath;
+            StatusText.Text = (_targetViews ? "Видов экспортировано: " : "Листов экспортировано: ") +
+                              (p.Done > 0 ? p.Done : _targetCount) + " → " + _targetPath;
         }
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)

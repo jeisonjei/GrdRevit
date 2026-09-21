@@ -108,8 +108,14 @@ namespace GrdInstaller
             Directory.CreateDirectory(r.AddinDir);
 
             var flavor = r.SupportsNet48 ? "Revit2024" : "Revit2026";
-            WriteEmbedded(flavor + ".dll", Path.Combine(r.BinDir, "GrdRevit.dll"));
-            WriteEmbedded(flavor + ".Core.dll", Path.Combine(r.BinDir, "GrdRevit.Core.dll"));
+            // Пишем все встроенные файлы флэйвера: GrdRevit.dll, GrdRevit.Core.dll,
+            // PdfSharp, System.*, Microsoft.Extensions.* и deps.json (net8).
+            var prefix = "GrdInstaller." + flavor + ".";
+            foreach (var name in Assembly.GetExecutingAssembly().GetManifestResourceNames())
+            {
+                if (!name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                WriteEmbedded(name, Path.Combine(r.BinDir, name.Substring(prefix.Length)));
+            }
 
             var id = r.SupportsNet48 ? AddinId2024 : AddinId2026;
             var addin = new StringBuilder();
@@ -134,12 +140,12 @@ namespace GrdInstaller
                 try { Directory.Delete(r.BinDir, true); } catch { }
         }
 
-        private static void WriteEmbedded(string logicalName, string dest)
+        private static void WriteEmbedded(string resourceName, string dest)
         {
             var asm = Assembly.GetExecutingAssembly();
-            using (var s = asm.GetManifestResourceStream("GrdInstaller." + logicalName))
+            using (var s = asm.GetManifestResourceStream(resourceName))
             {
-                if (s == null) throw new FileNotFoundException("Встроенный файл не найден: " + logicalName);
+                if (s == null) throw new FileNotFoundException("Встроенный файл не найден: " + resourceName);
                 using (var f = File.Create(dest)) s.CopyTo(f);
             }
         }

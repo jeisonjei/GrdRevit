@@ -27,7 +27,7 @@
                             ToolTip="Добавить текст в начало имени всех отмеченных чекбоксами видов"/>
                     <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="14,0,0,0"
                                Foreground="{StaticResource TextSecondaryBrush}"
-                               Text="Курсор уже в поле поиска: начните вводить имя — список отфильтруется. Навигация по видам/листам: стрелки ▲▼ и Home/End, Enter — открыть выбранный, Ctrl+F — вернуть курсор в поиск."/>
+                               Text="Курсор уже в поле поиска: начните вводить имя — список отфильтруется. Навигация по видам/листам: стрелки ▲▼ и Home/End, Enter — открыть выбранный, Ctrl+K — вернуть курсор в поиск."/>
                 </StackPanel>
             </StackPanel>
         </GroupBox>
@@ -63,7 +63,7 @@
                                Foreground="{StaticResource TextSecondaryBrush}"/>
                     <TextBox x:Name="FilterBox" Width="280" Padding="6,3" TextChanged="OnFilterChanged"
                              PreviewKeyDown="OnSearchKeyDown"
-                             ToolTip="Фильтрует список видов по имени. Стрелки ▲▼ — по списку, Enter — открыть, Ctrl+F — вернуть курсор в поле поиска"/>
+                             ToolTip="Фильтрует список видов по имени. Стрелки ▲▼ — по списку, Enter — открыть, Ctrl+K — вернуть курсор в поле поиска"/>
                     <Button Content="✕" Click="OnFilterReset" Margin="4,0,14,0" Width="24" Padding="0"/>
 
                     <RadioButton x:Name="RbAll" Content="Всё" GroupName="ViewPreset" IsChecked="True"
@@ -83,10 +83,6 @@
                                  ToolTip="Редкие комбинации типов: отметьте нужные чекбоксы вручную"/>
                     <TextBlock x:Name="CountText" VerticalAlignment="Center"
                                Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <CheckBox x:Name="FavOnlyCheck" Content="★ Только избранное"
-                              VerticalAlignment="Center" Margin="16,0,0,0"
-                              Checked="OnFavOnlyChanged" Unchecked="OnFavOnlyChanged"
-                              ToolTip="Показывать только виды, отмеченные звёздочкой ★"/>
                 </StackPanel>
                 <StackPanel x:Name="ManualFiltersPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="54,0,0,4">
                     <TextBlock Text="Типы:" VerticalAlignment="Center" Margin="0,0,8,0"
@@ -111,10 +107,14 @@
                     <RadioButton x:Name="RbContains" Content="Содержит" GroupName="MatchMode"
                                  IsChecked="True" VerticalAlignment="Center"
                                  Checked="OnMatchModeChanged"/>
+                    <CheckBox x:Name="FavOnlyCheck" Content="★ Только избранное"
+                              VerticalAlignment="Center" Margin="18,0,0,0"
+                              Checked="OnFavOnlyChanged" Unchecked="OnFavOnlyChanged"
+                              ToolTip="Показывать только виды, отмеченные звёздочкой ★"/>
                 </StackPanel>
                 <TextBlock Margin="2,4,2,0" TextWrapping="Wrap" FontSize="12"
                            Foreground="{StaticResource TextSecondaryBrush}"
-                           Text="Клавиатура: ▲ ▼ — выбор по списку видов/листов, Home/End — в начало/конец, Enter — открыть вид, Ctrl+F — вернуть курсор в поиск, Esc — закрыть окно, F2 — переименовать."/>
+                           Text="Клавиатура: ▲ ▼ — выбор по списку видов/листов, Home/End — в начало/конец, Enter — открыть вид, Ctrl+K — вернуть курсор в поиск, Esc — закрыть окно, F2 — переименовать."/>
             </StackPanel>
 
             <DataGrid x:Name="ViewsGrid"

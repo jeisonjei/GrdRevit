@@ -1,5 +1,6 @@
 param(
-    [switch]$Publish
+    [switch]$Publish,
+    [switch]$SkipDeploy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,15 +13,64 @@ $DistRoot = Join-Path $RepoRoot 'dist'
 $Id2024 = '86C8044E-E80E-438B-9C23-239B96D1E94B'
 $Id2026 = '8E3F35CA-4985-4D7F-8F9F-FFEF76E7DB9E'
 
+# Обновляет установку плагина для одной версии Revit: копирует все файлы свежей
+# сборки (кроме PDB/XML) в %LOCALAPPDATA%\GrdRevit\<ver> и прописывает/обновляет
+# манифест %APPDATA%\Autodesk\Revit\Addins\<ver>\GrdRevit.addin.
+function Deploy-Local([string]$version, [string]$tfm) {
+    $addinsDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$version"
+    $binDir    = Join-Path $env:LOCALAPPDATA "GrdRevit\$version"
+    New-Item -ItemType Directory -Force -Path $addinsDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $binDir    | Out-Null
+
+    $running = @(Get-Process -Name 'Revit' -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        throw "Deploy-Local ($version): запущен процесс Revit (PID $($running[0].Id)) - DLL заблокированы. Закройте Revit и повторите сборку, либо запустите с -SkipDeploy."
+    }
+
+    $src = Join-Path $RepoRoot "src\Grd.Revit\bin\Release\$tfm"
+    Get-ChildItem $src -File | Where-Object { $_.Extension -notin @('.pdb', '.xml') } |
+        Copy-Item -Destination $binDir -Force
+
+    $id = if ($version -match '2024') { $Id2024 } else { $Id2026 }
+    $assemblyPath = Join-Path $binDir 'GrdRevit.dll'
+    $manifest = @"
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>JTOOLS</Name>
+    <Assembly>$assemblyPath</Assembly>
+    <AddInId>$id</AddInId>
+    <FullClassName>GrdRevit.GrdApplication</FullClassName>
+    <VendorId>GrdRevit</VendorId>
+    <VendorDescription>Загрузка .grd и типы отопительных приборов СО</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+"@
+    [System.IO.File]::WriteAllText((Join-Path $addinsDir 'GrdRevit.addin'), $manifest, (New-Object System.Text.UTF8Encoding($true)))
+    Write-Host "Deployed: $addinsDir\GrdRevit.addin -> $binDir"
+}
+
 Write-Host "=== Build $SolPath ==="
 dotnet build $SolPath -c Release --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
+# Авторазвёртывание в рабочую установку, на которую ссылаются .addin из %APPDATA%:
+# свежая сборка (в т.ч. PdfSharp и прочие зависимости) в %LOCALAPPDATA%\GrdRevit\<ver>
+# и манифест GrdRevit.addin. После запуска Revit подберёт обновлённые DLL.
+if (-not $SkipDeploy) {
+    Deploy-Local '2024' 'net48'
+    Deploy-Local '2026' 'net8.0-windows'
+    Write-Host "Deployed. Restart Revit to load the fresh DLLs."
+}
+
 if (-not $Publish) {
-    Write-Host "Built. To publish to Revit folders run: .\build\build.ps1 -Publish"
+    Write-Host "Built (local install updated). To publish to dist + installer run: .\build\build.ps1 -Publish"
     exit 0
 }
 
+# Обновляет установку плагина для одной версии Revit: копирует все файлы свежей
+# сборки (кроме PDB/XML) в %LOCALAPPDATA%\GrdRevit\<ver> и прописывает/обновляет
+# манифест %APPDATA%\Autodesk\Revit\Addins\<ver>\GrdRevit.addin.
 function New-VersionDir([string]$version, [string]$tfm) {
     $verDir = Join-Path $DistRoot "Revit$version"
     $addonsDir = Join-Path $verDir 'Addins'
@@ -71,3 +121,4 @@ Write-Host ""
 Write-Host "Quick install: run dist\JTOOLS_Installer.exe (single self-contained installer)"
 Write-Host "Manual install: put dist\Revit<ver>\Addins\*.addin into %APPDATA%\Autodesk\Revit\Addins\<ver>\"
 Write-Host "Keep DLLs in dist\Revit<ver>\ (paths in .addin are absolute)."
+Write-Host "Note: a plain build already auto-deploys to %LOCALAPPDATA%\GrdRevit\<ver> for the current user (disable with -SkipDeploy)."

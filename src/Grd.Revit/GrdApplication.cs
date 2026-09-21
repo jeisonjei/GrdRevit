@@ -21,7 +21,6 @@ namespace GrdRevit
         private const string ScheduleExportButtonName = "GrdRevit.ScheduleExport";
         private const string ScheduleSnapshotButtonName = "GrdRevit.ScheduleSnapshot";
         private const string PdfPrintButtonName = "GrdRevit.PdfPrint";
-        private const string DwgExportButtonName = "GrdRevit.DwgExport";
         private const string SettingsButtonName = "GrdRevit.Settings";
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
 
@@ -196,24 +195,6 @@ namespace GrdRevit
                 pdfPrintData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(pdfPrintData);
-
-                var dwgExportData = new PushButtonData(
-                    DwgExportButtonName,
-                    "Экспорт\nв DWG",
-                    Assembly.GetExecutingAssembly().Location,
-                    typeof(GrdDwgExportCommand).FullName)
-                {
-                    ToolTip = "Сохранить выбранные листы в один DWG: каждый лист становится отдельным layout",
-                    LongDescription = "Открывает окно со списком всех листов проекта (поиск, галочки, избранное ★). " +
-                                      "Отмеченные листы экспортируются в один DWG-файл (MergedViews), каждый лист — " +
-                                      "отдельный layout. Избранные листы общие с окном «Печать в PDF» и запоминаются " +
-                                      "по документу; путь сохранения запоминается."
-                };
-                dwgExportData.Image = LoadIcon("GrdRevit.Resources.schedule16.png");
-                dwgExportData.LargeImage = LoadIcon("GrdRevit.Resources.schedule32.png");
-                dwgExportData.AvailabilityClassName = typeof(GrdAvailability).FullName;
-
-                panel.AddItem(dwgExportData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,
