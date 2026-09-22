@@ -1,6 +1,7 @@
 <Window x:Class="GrdRevit.Ui.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:revit="clr-namespace:GrdRevit"
         Title="Настройки Audytor"
         Width="760" SizeToContent="Height"
         WindowStartupLocation="CenterOwner">
@@ -95,6 +96,16 @@
                       ToolTip="Окна плагина будут оставаться над окнами Revit и других программ, пока галочка включена"
                       Checked="OnWindowsTopmostChanged" Unchecked="OnWindowsTopmostChanged"
                       FontWeight="Medium"/>
+        </GroupBox>
+
+        <GroupBox DockPanel.Dock="Top" Header="О плагине" Margin="0,0,0,8" Padding="4">
+            <StackPanel Margin="2,0">
+                <TextBlock Text="{x:Static revit:PluginInfo.Display}" FontWeight="Medium"/>
+                <TextBlock Text="Путь к сборке: "
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                <TextBlock Text="{x:Static revit:PluginInfo.AssemblyLocation}"
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
         </GroupBox>
 
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">

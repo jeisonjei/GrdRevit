@@ -338,20 +338,38 @@ namespace GrdRevit.Revit
             if (v == null) return Err("Вид не найден или документ неактивен.");
 
             long dupId = 0;
-            using (var t = new Transaction(doc, "JTOOLS: дублировать вид"))
+            using (var t = new Transaction(doc, "JTOOLS: дублировать вид/лист"))
             {
                 try { t.Start(); } catch (Exception ex) { return Err("Не удалось начать транзакцию: " + ex.Message); }
 
                 try
                 {
-                    dupId = v.Duplicate(ViewDuplicateOption.Duplicate).Value;
-                    var dup = dupId != ElementId.InvalidElementId.Value
-                        ? doc.GetElement(new ElementId(dupId)) as View
-                        : null;
-                    if (dup == null)
+                    View dup;
+                    if (v is ViewSheet sheet)
+                    {
+                        // Листы нельзя дублировать как виды: ViewSheet.Duplicate(SheetDuplicateOption).
+                        // Берём максимально полный вариант, который Revit позволяет для этого листа:
+                        // сначала с видами и деталировкой, затем без деталировки, затем пустой.
+                        var opt = SheetDuplicateOption.DuplicateSheetWithViewsAndDetailing;
+                        if (!sheet.CanBeDuplicated(opt)) opt = SheetDuplicateOption.DuplicateSheetWithViewsOnly;
+                        if (!sheet.CanBeDuplicated(opt)) opt = SheetDuplicateOption.DuplicateSheetWithDetailing;
+                        if (!sheet.CanBeDuplicated(opt)) opt = SheetDuplicateOption.DuplicateEmptySheet;
+                        if (!sheet.CanBeDuplicated(opt))
+                        {
+                            try { t.RollBack(); } catch { }
+                            return Err("Revit не позволяет дублировать этот лист.");
+                        }
+                        dup = doc.GetElement(sheet.Duplicate(opt)) as View;
+                    }
+                    else
+                    {
+                        dup = doc.GetElement(v.Duplicate(ViewDuplicateOption.Duplicate)) as View;
+                    }
+                    dupId = dup != null ? dup.Id.Value : 0;
+                    if (dup == null || dupId == ElementId.InvalidElementId.Value)
                     {
                         try { t.RollBack(); } catch { }
-                        return Err("Не удалось дублировать вид.");
+                        return Err("Не удалось дублировать вид или лист.");
                     }
 
                     var taken = new HashSet<string>(
@@ -369,7 +387,7 @@ namespace GrdRevit.Revit
                 catch (Exception ex)
                 {
                     try { t.RollBack(); } catch { }
-                    return Err("Невозможно дублировать этот вид: " + ex.Message);
+                    return Err("Невозможно дублировать этот вид или лист: " + ex.Message);
                 }
             }
 

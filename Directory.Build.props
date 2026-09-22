@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Единый источник версии плагина JTOOLS.
+    Задаёт AssemblyVersion/FileVersion всех проектов решения.
+    Информационная версия дополняется коротким хэшем коммита (SourceRevisionId),
+    чтобы в логах и UI было видно точную сборку.
+  -->
+  <PropertyGroup>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SourceRevisionId)' != ''">
+    <InformationalVersion>$(Version)+$(SourceRevisionId.Trim())</InformationalVersion>
+  </PropertyGroup>
+
+</Project>

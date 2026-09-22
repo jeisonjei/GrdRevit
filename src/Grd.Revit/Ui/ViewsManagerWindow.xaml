@@ -17,7 +17,7 @@
     <DockPanel Margin="10">
         <GroupBox DockPanel.Dock="Bottom" Header="Действия" Margin="0,8,0,0" Padding="6">
             <StackPanel>
-                <TextBlock Text="Номер листа меняется в строке листа колонкой «Номер листа» (она появляется, когда выбран только фильтр «Листы»). Отмечайте виды чекбоксами слева для групповых операций. Переименование — двойной щелчок по имени или F2. «✓ Добавить префикс…» добавит текст в начало имён всех отмеченных видов."
+                <TextBlock Text="Номер листа меняется в строке листа колонкой «Номер листа» (она появляется, когда выбран только фильтр «Листы»). Отмечайте виды чекбоксами слева для групповых операций. Переименование — двойной щелчок по имени или F2. «✓ Добавить префикс…» добавит текст в начало имён всех отмеченных видов. «Дублировать» для листа копирует его целиком — со штампом, размещёнными видами и деталировкой."
                            TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Обновить список" Click="OnRefresh" Style="{StaticResource GhostButtonStyle}" Padding="12,5"/>
@@ -203,7 +203,7 @@
                             <DataTemplate>
                                 <Button Click="OnDuplicateClick" Tag="{Binding}" Padding="8,2" Margin="4,2"
                                         FontSize="12" HorizontalAlignment="Stretch"
-                                        ToolTip="Создать копию вида и сразу перейти к её переименованию">
+                                        ToolTip="Создать копию вида/листа (лист копируется целиком — со штампом, размещёнными видами и деталировкой; если Revit не позволяет, копия будет по возможности полной) и сразу перейти к её переименованию">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="⧉ " FontSize="12"/>
                                         <TextBlock Text="Копия"/>

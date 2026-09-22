@@ -61,10 +61,8 @@ namespace GrdRevit
                 string location = "?";
                 try
                 {
-                    var asm = Assembly.GetExecutingAssembly();
-                    var fv = asm.GetCustomAttribute<AssemblyFileVersionAttribute>();
-                    version = fv?.Version ?? asm.GetName().Version?.ToString() ?? "?";
-                    location = asm.Location;
+                    version = PluginInfo.Version;
+                    location = PluginInfo.AssemblyLocation;
                 }
                 catch { }
 
