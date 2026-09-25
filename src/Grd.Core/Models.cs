@@ -43,6 +43,8 @@ namespace GrdRevit.Core
         public string RawNeighbours;   // диагностика: сырые соседние раны
         public string ValveSetting;    // настройка клапана (редактируется пользователем)
         public string MissingReason;   // причина отсутствия кода/типа (пусто, если тип найден)
+        public string Mark;            // полный текст выноски (марка) — источник DXF-каталога
+        public double? LengthMm;       // длина прибора, мм (из блока/выноски)
     }
 
     public sealed class GrdDocument

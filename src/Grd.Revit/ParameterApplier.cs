@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Autodesk.Revit.DB;
@@ -9,15 +10,16 @@ namespace GrdRevit.Revit
     /// <summary>
     /// Применяет значения прибора к параметрам экземпляра выбранного элемента
     /// по карте настроек «Источник значения -> параметр экземпляра Revit».
-    /// Источники фиксированы: "Фhl" (тепловая мощность, Вт) и "Valve setting"
-    /// (настройка клапана — текстовое значение из главной таблицы).
+    /// Источники фиксированы: "Фhl" (тепловая мощность, Вт), "Valve setting"
+    /// (настройка клапана — текстовое значение из главной таблицы) и "Марка"
+    /// (полный текст выноски при отопительном приборе из DXF, окно «Марки DXF»).
     /// </summary>
     public static class ParameterApplier
     {
         public static string Apply(Element element, GrdSettings settings, GrdDevice device)
         {
             var sb = new StringBuilder();
-            var map = settings.ValueParamMap;
+            var map = EffectiveMap(settings, device);
 
             if (map == null || map.Count == 0)
             {
@@ -45,7 +47,29 @@ namespace GrdRevit.Revit
                     sb.AppendLine($"- «Valve setting»: пустое значение");
             }
 
+            if (map.TryGetValue("Марка", out var markParam) && !string.IsNullOrWhiteSpace(markParam))
+            {
+                string value = device?.Mark ?? string.Empty;
+                if (!string.IsNullOrEmpty(value))
+                    WriteParam(element, sb, markParam, "Марка", value);
+                else
+                    sb.AppendLine($"- «Марка»: пустое значение");
+            }
+
             return sb.ToString().TrimEnd('\n');
+        }
+
+        /// <summary>
+        /// Результирующая карта «источник -> параметр» для конкретного устройства —
+        /// единая глобальная карта ValueParamMap (параметры применяются ко всем
+        /// семействам одинаково; помарковых переопределений больше нет).
+        /// </summary>
+        private static Dictionary<string, string> EffectiveMap(GrdSettings settings, GrdDevice device)
+        {
+            if (settings == null) return null;
+            var map = settings.ValueParamMap;
+            if (map == null || map.Count == 0) return null;
+            return map;
         }
 
         private static void WriteParam(Element element, StringBuilder sb, string paramName, string source, string value)
@@ -158,7 +182,7 @@ namespace GrdRevit.Revit
         /// </summary>
         public static string VerifyAndRepair(Document doc, ElementId targetId, GrdSettings settings, GrdDevice device)
         {
-            var map = settings?.ValueParamMap;
+            var map = EffectiveMap(settings, device);
             if (map == null || map.Count == 0) return string.Empty;
 
             var sb = new StringBuilder();

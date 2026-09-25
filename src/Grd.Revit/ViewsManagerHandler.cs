@@ -10,6 +10,7 @@ namespace GrdRevit.Revit
     public sealed class ViewInfoItem
     {
         public long Id;
+        public string UniqueId = string.Empty;
         public string Name = string.Empty;
         public string KindText = string.Empty;
         public string KindKey = string.Empty; // "section" | "plan" | "3d" | "sheet"
@@ -251,6 +252,7 @@ namespace GrdRevit.Revit
                     var item = new ViewInfoItem
                     {
                         Id = v.Id.Value,
+                        UniqueId = v.UniqueId,
                         Name = v.Name,
                         KindKey = KindKeyOf(v.ViewType)
                     };

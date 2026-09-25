@@ -37,10 +37,25 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _applyEvent;
         public static Autodesk.Revit.UI.ExternalEvent ApplyEvent => _applyEvent;
 
+        /// <summary>Маршалит применение приборов из области DXF к текущему виду.</summary>
+        public static Revit.ApplyToViewHandler ApplyToViewHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _applyToViewEvent;
+        public static Autodesk.Revit.UI.ExternalEvent ApplyToViewEvent => _applyToViewEvent;
+
         /// <summary>Маршалит чтение типа выделенного элемента для автозаполнения карты кода в настройках.</summary>
         public static Revit.PickTypeHandler PickHandler;
         private static Autodesk.Revit.UI.ExternalEvent _pickEvent;
         public static Autodesk.Revit.UI.ExternalEvent PickEvent => _pickEvent;
+
+        /// <summary>Маршалит чтение каталога механического оборудования (окно «Марки DXF»).</summary>
+        public static Revit.MarksCatalogHandler MarksCatalogHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _marksCatalogEvent;
+        public static Autodesk.Revit.UI.ExternalEvent MarksCatalogEvent => _marksCatalogEvent;
+
+        /// <summary>Маршалит создание недостающих типов в семействах (кнопка «Создать недостающие типы»).</summary>
+        public static Revit.MarksCreateTypesHandler MarksCreateTypesHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _marksCreateTypesEvent;
+        public static Autodesk.Revit.UI.ExternalEvent MarksCreateTypesEvent => _marksCreateTypesEvent;
 
         /// <summary>Маршалит чтение типовых параметров для колонки «Код» (подстановка значений).</summary>
         public static Revit.TypeParamsHandler TypeParamsHandler;
@@ -100,11 +115,29 @@ namespace GrdRevit
                 _applyEvent = Autodesk.Revit.UI.ExternalEvent.Create(ApplyHandler);
                 GrdLog.Log("EnsureHandlers: ApplyEvent created");
             }
+            if (_applyToViewEvent == null)
+            {
+                ApplyToViewHandler = new Revit.ApplyToViewHandler();
+                _applyToViewEvent = Autodesk.Revit.UI.ExternalEvent.Create(ApplyToViewHandler);
+                GrdLog.Log("EnsureHandlers: ApplyToViewEvent created");
+            }
             if (_pickEvent == null)
             {
                 PickHandler = new Revit.PickTypeHandler();
                 _pickEvent = Autodesk.Revit.UI.ExternalEvent.Create(PickHandler);
                 GrdLog.Log("EnsureHandlers: PickEvent created");
+            }
+            if (_marksCatalogEvent == null)
+            {
+                MarksCatalogHandler = new Revit.MarksCatalogHandler();
+                _marksCatalogEvent = Autodesk.Revit.UI.ExternalEvent.Create(MarksCatalogHandler);
+                GrdLog.Log("EnsureHandlers: MarksCatalogEvent created");
+            }
+            if (_marksCreateTypesEvent == null)
+            {
+                MarksCreateTypesHandler = new Revit.MarksCreateTypesHandler();
+                _marksCreateTypesEvent = Autodesk.Revit.UI.ExternalEvent.Create(MarksCreateTypesHandler);
+                GrdLog.Log("EnsureHandlers: MarksCreateTypesEvent created");
             }
             if (_typeParamsEvent == null)
             {

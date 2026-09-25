@@ -14,11 +14,16 @@ namespace GrdRevit.Revit
     public sealed class SheetInfo : IDwgExportItem
     {
         public long SheetId;
+        public string SheetUniqueId = string.Empty;
         public string SheetNumber = string.Empty;
         public string SheetName = string.Empty;
 
         public long IdValue => SheetId;
         public string FavScope => "sheets";
+
+        public string FavKey => string.IsNullOrEmpty(SheetUniqueId)
+            ? SheetId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : SheetUniqueId;
 
         /// <summary>Галочка в списке листов: отмеченные листы печатаются в один PDF.</summary>
         public bool IsChecked { get; set; }
@@ -530,6 +535,7 @@ namespace GrdRevit.Revit
                 items.Add(new SheetInfo
                 {
                     SheetId = sheet.Id.Value,
+                    SheetUniqueId = sheet.UniqueId,
                     SheetNumber = sheet.SheetNumber ?? string.Empty,
                     SheetName = sheet.Name ?? string.Empty
                 });

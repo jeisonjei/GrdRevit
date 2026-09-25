@@ -169,7 +169,8 @@
                         </DataGridTextColumn.EditingElementStyle>
                     </DataGridTextColumn>
                     <DataGridTextColumn x:Name="SheetNumberCol" Header="Номер листа" Visibility="Collapsed"
-                                        Binding="{Binding SheetNumber, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="100">
+                                        Binding="{Binding SheetNumber, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="100"
+                                        SortMemberPath="SheetNumberSortKey">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>

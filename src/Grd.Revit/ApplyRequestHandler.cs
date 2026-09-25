@@ -17,11 +17,20 @@ namespace GrdRevit.Revit
         private readonly object _sync = new object();
         private GrdDevice _row;
         private GrdSettings _settings;
+        private ElementId[] _ids;
 
+        /// <summary>Очередь для одиночного применения: id элемента берётся из текущего выбора.</summary>
         public void Queue(GrdDevice row, GrdSettings settings)
+        {
+            Queue(null, row, settings);
+        }
+
+        /// <summary>Очередь применения к конкретным элементам (одному или нескольким сразу).</summary>
+        public void Queue(ElementId[] ids, GrdDevice row, GrdSettings settings)
         {
             lock (_sync)
             {
+                _ids = ids;
                 _row = row;
                 _settings = settings;
             }
@@ -36,10 +45,13 @@ namespace GrdRevit.Revit
         {
             GrdDevice row;
             GrdSettings settings;
+            ElementId[] ids;
             lock (_sync)
             {
+                ids = _ids;
                 row = _row;
                 settings = _settings;
+                _ids = null;
                 _row = null;
             }
 
@@ -58,16 +70,20 @@ namespace GrdRevit.Revit
                 {
                     result = "Нет активного документа.";
                 }
+                else if (ids != null && ids.Length > 0)
+                {
+                    result = ApplyMany(app, ids, row, settings);
+                }
                 else
                 {
-                    var ids = uiDoc.Selection.GetElementIds();
-                    if (ids == null || ids.Count != 1 || ids.First() == ElementId.InvalidElementId)
+                    var selected = uiDoc.Selection.GetElementIds();
+                    if (selected == null || selected.Count != 1 || selected.First() == ElementId.InvalidElementId)
                     {
                         result = "Выберите ровно один элемент механического оборудования.";
                     }
                     else
                     {
-                        result = ApplyService.Apply(app, ids.First(), row, settings);
+                        result = ApplyService.Apply(app, selected.First(), row, settings);
                     }
                 }
             }
@@ -79,6 +95,52 @@ namespace GrdRevit.Revit
 
             GrdLog.Log("ApplyHandler.Execute: результат: " + result);
             ShowResult(result, row);
+        }
+
+        /// <summary>Применяет марку к каждому из выбранных элементов (отдельная транзакция на элемент).</summary>
+        private static string ApplyMany(UIApplication app, ElementId[] ids, GrdDevice row, GrdSettings settings)
+        {
+            var sb = new System.Text.StringBuilder();
+            var failures = new System.Collections.Generic.List<string>();
+            int applied = 0;
+            foreach (var id in ids)
+            {
+                var r = ApplyService.Apply(app, id, row, settings);
+                if (string.IsNullOrEmpty(r)) { applied++; continue; }
+                if (IsFailure(r)) failures.Add(FirstLine(r));
+                else applied++;
+            }
+
+            if (failures.Count == 0)
+                sb.Append("Применено к ").Append(applied).Append(Plural(applied, " элементу", " элементам", " элементам")).Append('.');
+            else
+                sb.Append("Применено к ").Append(applied).Append(" из ").Append(ids.Length).Append(". Не применено: ")
+                  .Append(string.Join("; ", failures));
+
+            string output = sb.ToString();
+            GrdLog.Log("ApplyHandler.ApplyMany: " + output);
+            return output;
+        }
+
+        private static bool IsFailure(string r)
+        {
+            return r.StartsWith("!") || r.StartsWith("Не удалось") || r.StartsWith("Выберите")
+                   || r.StartsWith("Нет активного") || r.StartsWith("Карта значений не настроена")
+                   || r.StartsWith("Тип не применён");
+        }
+
+        private static string FirstLine(string s)
+        {
+            var i = s.IndexOf('\n');
+            return i < 0 ? s : s.Substring(0, i).Trim();
+        }
+
+        private static string Plural(int n, string one, string few, string many)
+        {
+            int m10 = n % 10, m100 = n % 100;
+            if (m10 == 1 && m100 != 11) return one;
+            if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+            return many;
         }
 
         private void ShowResult(string result, GrdDevice row)

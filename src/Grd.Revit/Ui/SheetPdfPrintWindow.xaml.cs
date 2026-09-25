@@ -77,7 +77,7 @@ namespace GrdRevit.Ui
                         _master.Clear();
                         _master.AddRange(res.Sheets);
                         foreach (var s in _master)
-                            s.IsFavorite = _favIds.Contains(s.SheetId.ToString(CultureInfo.InvariantCulture));
+                            s.IsFavorite = _favIds.Contains(s.FavKey);
                         ApplySavedSelection();
                         RebuildList();
                         StatusText.Text = "Листов: " + _master.Count + ".";
@@ -139,8 +139,7 @@ namespace GrdRevit.Ui
         {
             if (!(sender is FrameworkElement fe) || !(fe.Tag is SheetInfo s)) return;
             s.IsFavorite = !s.IsFavorite;
-            FavoriteStore.Set(_docKey, "sheets",
-                s.SheetId.ToString(CultureInfo.InvariantCulture), s.IsFavorite);
+            FavoriteStore.Set(_docKey, "sheets", s.FavKey, s.IsFavorite);
             SheetsList.Items.Refresh();
             if (OnlyFavCheck.IsChecked == true)
                 Dispatcher.BeginInvoke(new Action(RebuildList));

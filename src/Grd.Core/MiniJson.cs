@@ -27,13 +27,21 @@ namespace GrdRevit.Core
             sb.Append(',');
             WriteProp(sb, "Default3DBoxHeight", s.Default3DBoxHeight.ToString(CultureInfo.InvariantCulture));
             sb.Append(',');
+            WriteProp(sb, "SuperRotateAngleDeg", s.SuperRotateAngleDeg.ToString(CultureInfo.InvariantCulture));
+            sb.Append(',');
             WriteProp(sb, "ValueParamMap", WriteDict(s.ValueParamMap));
+            sb.Append(',');
+            WriteProp(sb, "MarkTypeMap", WriteMarkTypeMap(s.MarkTypeMap));
+            sb.Append(',');
+            WriteProp(sb, "MarkValueMap", WriteMarkValueMap(s.MarkValueMap));
             sb.Append(',');
             WriteProp(sb, "LastGrdPath", Quote(Encode(s.LastGrdPath)));
             sb.Append(',');
             WriteProp(sb, "LastRoomsPath", Quote(Encode(s.LastRoomsPath)));
             sb.Append(',');
             WriteProp(sb, "LastValveSettingsPath", Quote(Encode(s.LastValveSettingsPath)));
+            sb.Append(',');
+            WriteProp(sb, "LastDxfPath", Quote(Encode(s.LastDxfPath)));
             sb.Append(',');
             WriteProp(sb, "LastSharedParamsPath", Quote(Encode(s.LastSharedParamsPath)));
             sb.Append(',');
@@ -101,6 +109,40 @@ namespace GrdRevit.Core
             return sb.Append('}').ToString();
         }
 
+        /// <summary>Сериализует карту «марка -> семейство/тип» в JSON-объект.</summary>
+        private static string WriteMarkTypeMap(Dictionary<string, MarkTypeEntry> d)
+        {
+            var sb = new StringBuilder("{");
+            bool first = true;
+            foreach (var kv in d)
+            {
+                if (!first) sb.Append(',');
+                sb.Append('"').Append(Encode(kv.Key)).Append("\":{");
+                sb.Append("\"Family\":\"").Append(Encode(kv.Value?.Family ?? string.Empty)).Append("\",");
+                sb.Append("\"Type\":\"").Append(Encode(kv.Value?.Type ?? string.Empty)).Append("\"}");
+                first = false;
+            }
+            return sb.Append('}').ToString();
+        }
+
+        /// <summary>Сериализует карту «марка -> параметры экземпляра».</summary>
+        private static string WriteMarkValueMap(Dictionary<string, MarkValueParamEntry> d)
+        {
+            var sb = new StringBuilder("{");
+            bool first = true;
+            foreach (var kv in d)
+            {
+                if (kv.Value == null || kv.Value.IsEmpty) continue;
+                if (!first) sb.Append(',');
+                sb.Append('"').Append(Encode(kv.Key)).Append("\":{");
+                sb.Append("\"PowerParam\":\"").Append(Encode(kv.Value.PowerParam ?? string.Empty)).Append("\",");
+                sb.Append("\"ValveParam\":\"").Append(Encode(kv.Value.ValveParam ?? string.Empty)).Append("\",");
+                sb.Append("\"MarkParam\":\"").Append(Encode(kv.Value.MarkParam ?? string.Empty)).Append("\"}");
+                first = false;
+            }
+            return sb.Append('}').ToString();
+        }
+
         private static void WriteProp(StringBuilder sb, string name, string valueJson)
         {
             sb.Append('"').Append(name).Append("\":").Append(valueJson);
@@ -150,10 +192,19 @@ namespace GrdRevit.Core
                     s.Default3DBoxHeight = dhVal;
                 }
             }
+            if (m.TryGetValue("SuperRotateAngleDeg", out var sra) && sra is string sraStr &&
+                double.TryParse(sraStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var sraVal) &&
+                sraVal != 0.0)
+            {
+                s.SuperRotateAngleDeg = sraVal;
+            }
             if (m.TryGetValue("ValueParamMap", out var vp)) ReadDict(vp, s.ValueParamMap);
+            if (m.TryGetValue("MarkTypeMap", out var mmt)) ReadMarkTypeMap(mmt, s.MarkTypeMap);
+            if (m.TryGetValue("MarkValueMap", out var mvm)) ReadMarkValueMap(mvm, s.MarkValueMap);
             if (m.TryGetValue("LastGrdPath", out var lp)) s.LastGrdPath = lp as string ?? string.Empty;
             if (m.TryGetValue("LastRoomsPath", out var rp)) s.LastRoomsPath = rp as string ?? string.Empty;
             if (m.TryGetValue("LastValveSettingsPath", out var vs)) s.LastValveSettingsPath = vs as string ?? string.Empty;
+            if (m.TryGetValue("LastDxfPath", out var dxf)) s.LastDxfPath = dxf as string ?? string.Empty;
             if (m.TryGetValue("LastSharedParamsPath", out var sp)) s.LastSharedParamsPath = sp as string ?? string.Empty;
             if (m.TryGetValue("SharedParamDefs", out var sd) && sd is IList<object> sdl)
             {
@@ -177,6 +228,102 @@ namespace GrdRevit.Core
         private static string ReadStr(Dictionary<string, object> m, string key)
         {
             return m.TryGetValue(key, out var v) ? (v as string) ?? string.Empty : string.Empty;
+        }
+
+        /// <summary>Читает карту «марка -> семейство/тип». Имеет обратную совместимость:
+        /// старый вариант записывал только имя типа строкой («марка»: «тип»).</summary>
+        private static void ReadMarkTypeMap(object value, Dictionary<string, MarkTypeEntry> dst)
+        {
+            if (value is Dictionary<string, object> dm)
+            {
+                foreach (var kv in dm)
+                {
+                    string key = kv.Key;
+                    if (string.IsNullOrEmpty(key)) continue;
+                    var entry = ReadMarkTypeEntryValue(kv.Value);
+                    if (entry != null) dst[key] = entry;
+                }
+                return;
+            }
+            if (value is IList<object> list) CopyMarkTypeMap(list, dst);
+        }
+
+        private static void CopyMarkTypeMap(IList<object> list, Dictionary<string, MarkTypeEntry> dst)
+        {
+            foreach (var item in list)
+            {
+                var pm = item as Dictionary<string, object>;
+                if (pm == null) continue;
+                foreach (var kv in pm)
+                {
+                    string key = kv.Key;
+                    if (string.IsNullOrEmpty(key)) continue;
+                    var entry = ReadMarkTypeEntryValue(kv.Value);
+                    if (entry != null) dst[key] = entry;
+                }
+            }
+        }
+
+        /// <summary>Разбирает значение карты марок: строка (старый формат «только тип»)
+        /// либо объект {"Family":..., "Type":...}. Пустые значения пропускаются.</summary>
+        private static MarkTypeEntry ReadMarkTypeEntryValue(object value)
+        {
+            if (value is string legacy)
+            {
+                if (string.IsNullOrWhiteSpace(legacy)) return null;
+                return new MarkTypeEntry { Type = legacy };
+            }
+            if (value is Dictionary<string, object> inner)
+            {
+                var family = ReadStr(inner, "Family");
+                var type = ReadStr(inner, "Type");
+                if (string.IsNullOrEmpty(family) && string.IsNullOrEmpty(type)) return null;
+                return new MarkTypeEntry { Family = family, Type = type };
+            }
+            return null;
+        }
+
+        /// <summary>Читает карту «марка -> параметры экземпляра» (объект {mark:{...}} либо массив [{mark:{...}}]).</summary>
+        private static void ReadMarkValueMap(object value, Dictionary<string, MarkValueParamEntry> dst)
+        {
+            if (value is Dictionary<string, object> dm)
+            {
+                foreach (var kv in dm)
+                {
+                    string key = kv.Key;
+                    if (string.IsNullOrEmpty(key)) continue;
+                    var entry = ReadMarkValueEntry(kv.Value);
+                    if (entry != null) dst[key] = entry;
+                }
+                return;
+            }
+            if (value is IList<object> list)
+            {
+                foreach (var item in list)
+                {
+                    var pm = item as Dictionary<string, object>;
+                    if (pm == null) continue;
+                    foreach (var kv in pm)
+                    {
+                        string key = kv.Key;
+                        if (string.IsNullOrEmpty(key)) continue;
+                        var entry = ReadMarkValueEntry(kv.Value);
+                        if (entry != null) dst[key] = entry;
+                    }
+                }
+            }
+        }
+
+        private static MarkValueParamEntry ReadMarkValueEntry(object value)
+        {
+            if (!(value is Dictionary<string, object> inner)) return null;
+            var entry = new MarkValueParamEntry
+            {
+                PowerParam = ReadStr(inner, "PowerParam"),
+                ValveParam = ReadStr(inner, "ValveParam"),
+                MarkParam = ReadStr(inner, "MarkParam")
+            };
+            return entry.IsEmpty ? null : entry;
         }
 
         /// <summary>Читает словарь либо из объекта {k:v}, либо из массива [ {k:v}, ... ].</summary>

@@ -12,6 +12,7 @@ namespace GrdRevit.Revit
         public bool Ok;
         public string FamilyName;
         public List<string> TypeNames = new List<string>();
+        public List<string> ParameterNames = new List<string>();
         public string Error;
     }
 
@@ -115,8 +116,56 @@ namespace GrdRevit.Revit
                 Ok = true,
                 FamilyName = family.Name,
                 TypeNames = typeNames,
+                ParameterNames = CollectFamilyParamNames(doc, family),
                 Error = string.Empty
             };
+        }
+
+        /// <summary>
+        /// Все имена параметров семейства (проектные и семейственные, экземпляр и тип):
+        /// из экземпляров семейства в документе и из привязок проекта (BindingMap).
+        /// Имена уникальны в любом случае — Definition.Name в модели один на параметр.
+        /// </summary>
+        private static List<string> CollectFamilyParamNames(Document doc, Family family)
+        {
+            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var instances = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilyInstance))
+                    .Cast<FamilyInstance>()
+                    .Where(fi => fi.IsValidObject && fi.Symbol != null &&
+                                 fi.Symbol.Family != null && fi.Symbol.Family.Id == family.Id)
+                    .ToList();
+                foreach (var fi in instances)
+                {
+                    foreach (var o in fi.Parameters)
+                    {
+                        var n = (o as Parameter)?.Definition?.Name;
+                        if (!string.IsNullOrEmpty(n)) names.Add(n);
+                    }
+                }
+            }
+            catch { /* экземпляры недоступны */ }
+
+            try
+            {
+                var bindings = doc.ParameterBindings;
+                if (bindings != null)
+                {
+                    var it = bindings.ForwardIterator();
+                    it.Reset();
+                    while (it.MoveNext())
+                    {
+                        var n = (it.Key as Definition)?.Name;
+                        if (!string.IsNullOrEmpty(n)) names.Add(n);
+                    }
+                }
+            }
+            catch { /* привязки недоступны */ }
+
+            return names.ToList();
         }
 
         private static PickTypeResult Fail(string message)

@@ -109,6 +109,7 @@ namespace GrdRevit.Ui
         {
             yield return new MapPair { Key = "Фhl", Value = map.TryGetValue("Фhl", out var f) ? f : string.Empty };
             yield return new MapPair { Key = "Valve setting", Value = map.TryGetValue("Valve setting", out var v) ? v : string.Empty };
+            yield return new MapPair { Key = "Марка", Value = map.TryGetValue("Марка", out var m) ? m : string.Empty };
         }
 
         /// <summary>Наполняет выпадающий список имён типовых параметров и параметров экземпляра.</summary>

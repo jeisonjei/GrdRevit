@@ -13,6 +13,7 @@ namespace GrdRevit.Revit
     {
         long IdValue { get; }
         string FavScope { get; }
+        string FavKey { get; }
         bool IsChecked { get; set; }
         bool IsFavorite { get; set; }
         string Display { get; }
@@ -23,6 +24,7 @@ namespace GrdRevit.Revit
     public sealed class ViewExportInfo : IDwgExportItem
     {
         public long ViewId;
+        public string ViewUniqueId = string.Empty;
         public string ViewName = string.Empty;
         public string TypeText = string.Empty;
 
@@ -30,6 +32,10 @@ namespace GrdRevit.Revit
         public string FavScope => "views";
         public bool IsChecked { get; set; }
         public bool IsFavorite { get; set; }
+
+        public string FavKey => string.IsNullOrEmpty(ViewUniqueId)
+            ? ViewId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : ViewUniqueId;
 
         public string Display =>
             string.IsNullOrWhiteSpace(TypeText) ? ViewName : ViewName + "  (" + TypeText + ")";
@@ -199,6 +205,7 @@ namespace GrdRevit.Revit
                 items.Add(new SheetInfo
                 {
                     SheetId = sheet.Id.Value,
+                    SheetUniqueId = sheet.UniqueId,
                     SheetNumber = sheet.SheetNumber ?? string.Empty,
                     SheetName = sheet.Name ?? string.Empty
                 });
@@ -228,6 +235,7 @@ namespace GrdRevit.Revit
                 items.Add(new ViewExportInfo
                 {
                     ViewId = v.Id.Value,
+                    ViewUniqueId = v.UniqueId,
                     ViewName = v.Name ?? string.Empty,
                     TypeText = ViewTypeText(v.ViewType)
                 });

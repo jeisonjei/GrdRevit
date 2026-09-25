@@ -87,7 +87,7 @@ namespace GrdRevit.Ui
                         _masterSheets.Clear();
                         foreach (var s in res.Sheets)
                         {
-                            s.IsFavorite = favs.Contains(s.SheetId.ToString(CultureInfo.InvariantCulture));
+                            s.IsFavorite = favs.Contains(s.FavKey);
                             _masterSheets.Add(s);
                         }
                         RebuildList();
@@ -113,7 +113,7 @@ namespace GrdRevit.Ui
                         _masterViews.Clear();
                         foreach (var v in res.Views)
                         {
-                            v.IsFavorite = favs.Contains(v.ViewId.ToString(CultureInfo.InvariantCulture));
+                            v.IsFavorite = favs.Contains(v.FavKey);
                             _masterViews.Add(v);
                         }
                         RebuildList();
@@ -206,8 +206,7 @@ namespace GrdRevit.Ui
         {
             if (!(sender is FrameworkElement fe) || !(fe.Tag is IDwgExportItem item)) return;
             item.IsFavorite = !item.IsFavorite;
-            FavoriteStore.Set(_docKey, item.FavScope,
-                item.IdValue.ToString(CultureInfo.InvariantCulture), item.IsFavorite);
+            FavoriteStore.Set(_docKey, item.FavScope, item.FavKey, item.IsFavorite);
             SheetsList.Items.Refresh();
             if (OnlyFavCheck.IsChecked == true)
                 Dispatcher.BeginInvoke(new Action(RebuildList));

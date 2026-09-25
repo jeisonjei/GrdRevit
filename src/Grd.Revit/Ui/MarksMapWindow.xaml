@@ -1,0 +1,187 @@
+<Window x:Class="GrdRevit.Ui.MarksMapWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:GrdRevit.Ui"
+        Title="Марки DXF — настройки (семейство и тип Revit)"
+        Width="1080" Height="720" MinWidth="820" MinHeight="500"
+        WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" ShowInTaskbar="False">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="8">
+            <WrapPanel Orientation="Horizontal">
+                <Button Content="Открыть DXF…" Padding="12,5" Style="{StaticResource PrimaryButtonStyle}"
+                        Click="OnOpenDxf" />
+                <Button x:Name="SaveButton" Content="Сохранить" Padding="12,5" Margin="8,0,0,0"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Click="OnSave" />
+                <Button Content="Обновить семейства" Padding="12,5" Margin="8,0,0,0" Click="OnRefreshFamilies"
+                        ToolTip="Перечитать семейства механического оборудования из активного документа Revit" />
+                <Button Content="Подобрать автоматически" Padding="12,5" Margin="8,0,0,0" Click="OnAutoMatch"
+                        ToolTip="Заполнить семейство и тип по «умному» сопоставлению (подсказка семейства из кода, длина/мощность из имени типа). Заполняется только при однозначном совпадении."/>
+                <Button Content="Создать недостающие типы" Padding="12,5" Margin="8,0,0,0" Click="OnCreateMissingTypes"
+                        ToolTip="Для строк с выбранным семейством и пустым типом создать недостающий тип в этом семействе Revit (имя типа — полный текст марки)."/>
+                <Button x:Name="ColumnsMenuButton" Content="Колонки ▾" Padding="12,5" Margin="8,0,0,0"
+                        Click="OnShowColumnsMenu"
+                        ToolTip="Показать/скрыть колонки таблицы"/>
+                <TextBlock x:Name="FileLabel" VerticalAlignment="Center" Margin="12,0,0,0"
+                           Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
+            </WrapPanel>
+        </DockPanel>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="SummaryLabel" Foreground="{StaticResource TextSecondaryBrush}" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <TabControl Margin="8,4,8,8">
+            <TabItem Header="Марки → семейства">
+                <DataGrid x:Name="MarksGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False" CanUserDeleteRows="False"
+                          HeadersVisibility="Column" GridLinesVisibility="All"
+                          IsReadOnly="False"
+                          CellEditEnding="OnCellEditEnding">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn x:Name="ColMark" Header="Марка (текст выноски)" Binding="{Binding MarkText}" Width="3*" IsReadOnly="True"/>
+                        <DataGridTextColumn x:Name="ColCode" Header="Код" Binding="{Binding Code}" Width="1.2*" IsReadOnly="True"/>
+                        <DataGridTextColumn x:Name="ColCapacity" Header="Мощность, Вт" Binding="{Binding CapacityLabel}" Width="0.9*" IsReadOnly="True"/>
+                        <DataGridTextColumn x:Name="ColCount" Header="Приборов на плане" Binding="{Binding Count}" Width="0.9*" IsReadOnly="True"/>
+                        <DataGridTemplateColumn x:Name="ColFamily" Header="Семейство" Width="2*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Family, Mode=OneWay}"
+                                               VerticalAlignment="Center" Margin="4,0"
+                                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableFamilies}"
+                                              SelectedItem="{Binding Family, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="" IsEditable="True"
+                                              BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center"
+                                              ToolTip="Семейство механического оборудования из активного документа Revit"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn x:Name="ColType" Header="Тип семейства Revit" Width="2.2*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding TypeName, Mode=OneWay}"
+                                               VerticalAlignment="Center" Margin="4,0"
+                                               Foreground="{StaticResource TextPrimaryBrush}" FontWeight="Medium"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding FamilyTypes}"
+                                              SelectedItem="{Binding TypeName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="" IsEditable="True"
+                                              BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center"
+                                              ToolTip="Тип выбранного семейства Revit. Отображаются типы семейства из колонки «Семейство»."/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="" Width="56">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="✓" FontSize="12" Padding="5,1"
+                                            Background="#DDEEF7" BorderBrush="#9CC6E5"
+                                            ToolTip="Взять семейство и тип из текущего выделения в Revit"
+                                            Click="OnPickTypeFromSelectionForRow"
+                                            Tag="{Binding}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+            <TabItem Header="Значения прибора → параметры">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                        <WrapPanel>
+                            <Button Content="Взять параметры из выделенного" Padding="10,4"
+                                    Click="OnPickParamsFromSelection"
+                                    ToolTip="Считывает все параметры (проектные и семейственные, экземпляр и тип) семейства выбранного в Revit элемента и наполняет выпадающие списки ниже."/>
+                            <TextBlock x:Name="ParamsSourceLabel" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                        </WrapPanel>
+                    </DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Каким параметрам экземпляра передавать значения прибора (мощность, настройка клапана «n=…», текст выноски). Применяется ко всем семействам на плане, единые для всех марок."
+                               TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="2,0,2,6"/>
+                    <DataGrid x:Name="MarkValueGrid"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False" CanUserDeleteRows="False"
+                              HeadersVisibility="Column" GridLinesVisibility="All"
+                              IsReadOnly="False"
+                              CellEditEnding="OnCellEditEnding">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Параметр мощности" Width="1.8*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding PowerParam, Mode=OneWay}"
+                                                   VerticalAlignment="Center" Margin="4,0"
+                                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding DataContext.InstanceParams, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  SelectedItem="{Binding PowerParam, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  DisplayMemberPath="" IsEditable="True"
+                                                  BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center"
+                                                  ToolTip="Параметр экземпляра для мощности (Вт)"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Параметр настройки" Width="1.8*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ValveParam, Mode=OneWay}"
+                                                   VerticalAlignment="Center" Margin="4,0"
+                                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding DataContext.InstanceParams, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  SelectedItem="{Binding ValveParam, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  DisplayMemberPath="" IsEditable="True"
+                                                  BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center"
+                                                  ToolTip="Параметр экземпляра для настройки клапана (n=…)"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Параметр марки" Width="1.8*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding MarkParam, Mode=OneWay}"
+                                                   VerticalAlignment="Center" Margin="4,0"
+                                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding DataContext.InstanceParams, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  SelectedItem="{Binding MarkParam, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  DisplayMemberPath="" IsEditable="True"
+                                                  BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center"
+                                                  ToolTip="Параметр экземпляра для полного текста выноски (марки)"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

@@ -1,0 +1,139 @@
+<Window x:Class="GrdRevit.Ui.DxfMapWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:GrdRevit.Ui"
+        Title="DXF — план отопления с приборами"
+        Width="1280" Height="800" MinWidth="960" MinHeight="600"
+        WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" ShowInTaskbar="False">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="8">
+            <WrapPanel Orientation="Horizontal">
+                <Button Content="Открыть DXF…" Padding="12,5" Style="{StaticResource PrimaryButtonStyle}"
+                        Click="OnOpenDxf" />
+                <Button Content="Вписать план" Padding="12,5" Margin="8,0,0,0"
+                        Click="OnFitAll" />
+                <ToggleButton x:Name="ValveLabelsButton" Content="Марки (n=…)" Padding="12,5" Margin="8,0,0,0"
+                              ToolTip="Показать у каждого прибора марку из DXF и настройку клапана «n=…» в две строки." 
+                              IsChecked="True" Checked="OnValveLabelsChanged" Unchecked="OnValveLabelsChanged" />
+                <ToggleButton x:Name="DiagButton" Content="Диагностика марок" Padding="12,5" Margin="8,0,0,0"
+                              ToolTip="Таблица соответствия приборов и марок: блок, размер, марка из выноски и из каталога, расстояние, настройка «n=…»."
+                              Checked="OnDiagChanged" Unchecked="OnDiagChanged" />
+                <ToggleButton x:Name="ApplyModeButton" Content="Применить к Revit" Padding="12,5" Margin="8,0,0,0"
+                              Checked="OnApplyModeChanged" Unchecked="OnApplyModeChanged" />
+                <Button x:Name="ApplySelButton" Content="Применить к выделенному" Padding="12,5" Margin="8,0,0,0"
+                        Style="{StaticResource PrimaryButtonStyle}" IsEnabled="False"
+                        Click="OnApplyToSelected" />
+                <Button x:Name="ApplyToViewButton" Content="Применить к текущему виду" Padding="12,5" Margin="8,0,0,0"
+                        Style="{StaticResource PrimaryButtonStyle}" IsEnabled="False"
+                        ToolTip="Применяет выделенные рамкой приборы к элементам текущего вида по совпадению координат. Не применённые подсвечиваются красным кольцом."
+                        Click="OnApplyToView" />
+                <Button x:Name="ClearWarningsButton" Content="Очистить предупреждения" Padding="12,5" Margin="8,0,0,0"
+                        Style="{StaticResource GhostButtonStyle}" IsEnabled="False"
+                        Click="OnClearWarnings" />
+                <Button Content="Очистить выбор" Padding="12,5" Margin="8,0,0,0" Click="OnClearSelection" />
+                <Button Content="Настройки марок…" Padding="12,5" Margin="8,0,0,0"
+                        Style="{StaticResource GhostButtonStyle}"
+                        ToolTip="Сопоставление марок приборов из DXF с семействами/типами Revit"
+                        Click="OnOpenMarksSettings" />
+                <TextBlock x:Name="FileLabel" VerticalAlignment="Center" Margin="12,0,0,0"
+                           Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="420" />
+            </WrapPanel>
+        </DockPanel>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="SummaryLabel" Foreground="{StaticResource TextSecondaryBrush}" />
+            </StatusBarItem>
+            <StatusBarItem DockPanel.Dock="Right">
+                <TextBlock x:Name="ModeHint" Text="Выберите прибор на плане — режим применения включится сам. Затем кликните элемент в Revit."
+                           Foreground="#555" Margin="0,0,12,0" VerticalAlignment="Center" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid Margin="8,0,8,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="320" />
+            </Grid.ColumnDefinitions>
+
+            <ui:DxfMapControl x:Name="Map" Grid.Row="0" Grid.Column="0"
+                              ClipToBounds="True" />
+            <Border Grid.Row="0" Grid.Column="1" Width="292" HorizontalAlignment="Right" Background="#F6F8FB"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="6" Margin="8,0,0,0" Padding="10">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <TextBlock Text="Выбранный прибор" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock x:Name="ChosenLabel" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+
+                        <Separator Margin="0,10,0,8" Background="{StaticResource BorderBrush}" />
+
+                        <TextBlock Text="Применение в Revit" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="Режим «Применить к Revit»: выберите прибор на плане кликом — режим включится сам. Затем кликните элемент механического оборудования на виде Revit — марка, тип и параметры применятся сразу."
+                                   TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                        <TextBlock Text="«Применить к выделенному»: работает с текущим выделением в Revit (один или несколько элементов)."
+                                   TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                        <TextBlock Text="«Применить к текущему виду»: выберите рамкой приборы на плане и нажмите кнопку — приборы применятся к элементам вида по совпадению координат. Не применённые подсветятся красным кольцом; снять подсветку — «Очистить предупреждения»."
+                                   TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+
+                        <Separator Margin="0,10,0,8" Background="{StaticResource BorderBrush}" />
+
+                        <TextBlock Text="Управление планом" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="Колесо — зум к курсору; правая/средняя кнопка или Пробел+левая — панорама; левая — выбор прибора."
+                                   TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                        <TextBlock Text="Рамка слева направо — «окно» (фиолетовая), справа налево — «секущая» (жёлтая)."
+                                   TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <DataGrid x:Name="DiagGrid" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                      Margin="0,8,0,0" MaxHeight="280" IsReadOnly="True" AutoGenerateColumns="False"
+                      HeadersVisibility="Column" GridLinesVisibility="All"
+                      Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                      Visibility="Collapsed"
+                      FontSize="12"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                <DataGrid.Resources>
+                    <Style TargetType="DataGridColumnHeader">
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="Background" Value="#F0F4F8" />
+                        <Setter Property="Padding" Value="6,3" />
+                    </Style>
+                </DataGrid.Resources>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="№" Binding="{Binding Seq}" Width="44" />
+                    <DataGridTextColumn Header="Этаж" Binding="{Binding Floor}" Width="46" />
+                    <DataGridTextColumn Header="Блок" Binding="{Binding Block}" Width="150" />
+                    <DataGridTextColumn Header="Размер" Binding="{Binding Size}" Width="70" />
+                    <DataGridTextColumn Header="Марка (выноска)" Binding="{Binding TruthMark}" Width="210" />
+                    <DataGridTextColumn Header="Марка (каталог)" Binding="{Binding SuggestedMark}" Width="200" />
+                    <DataGridTextColumn Header="n=" Binding="{Binding TruthValveSetting}" Width="46" />
+                    <DataGridTextColumn Header="Используем" Binding="{Binding MarkSource}" Width="90" />
+                    <DataGridTextColumn Header="Расст., мм" Binding="{Binding TruthDistance, StringFormat={}{0:N0}}" Width="90" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </DockPanel>
+</Window>

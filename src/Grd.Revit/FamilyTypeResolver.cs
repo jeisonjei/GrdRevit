@@ -29,6 +29,51 @@ namespace GrdRevit.Revit
                 .Where(s => s.Family != null)
                 .ToList();
 
+            // 0) Прямое указание пользователя: марка из DXF -> семейство и тип Revit.
+            //    Заполняется в окне «Марки DXF» (настройки плана) и имеет наивысший приоритет.
+            var byMark = FindMarkTypeEntry(device, settings);
+            if (byMark != null)
+            {
+                FamilySymbol found = null;
+                if (!string.IsNullOrEmpty(byMark.Family))
+                {
+                    // Семейство задано: ищем тип в семействе. Если тип тоже задан —
+                    // ровно по имени типа, иначе первый тип семейства.
+                    var inFamily = symbols
+                        .Where(s => string.Equals(s.Family.Name, byMark.Family, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (inFamily.Count > 0)
+                    {
+                        found = string.IsNullOrEmpty(byMark.Type)
+                            ? inFamily[0]
+                            : inFamily.FirstOrDefault(s => string.Equals(s.Name, byMark.Type, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (found != null)
+                    {
+                        result = found;
+                        log = $"Марка: {found.Family.Name} :: {found.Name}";
+                        return true;
+                    }
+                    log = $"Марка \u201C{device.Mark}\u201D: семейство \u201C{byMark.Family}\u201D";
+                    if (!string.IsNullOrEmpty(byMark.Type)) log += " :: тип \u201C" + byMark.Type + "\u201D";
+                    log += " не найдено в документе.";
+                }
+                else if (!string.IsNullOrEmpty(byMark.Type))
+                {
+                    // Старая запись без семейства: ищем по имени типа или семейства.
+                    found = symbols.FirstOrDefault(s =>
+                        string.Equals(s.Name, byMark.Type, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(s.Family.Name, byMark.Type, StringComparison.OrdinalIgnoreCase));
+                    if (found != null)
+                    {
+                        result = found;
+                        log = $"Марка: {found.Family.Name} :: {found.Name}";
+                        return true;
+                    }
+                    log = $"Марка \u201C{device.Mark}\u201D: тип \u201C{byMark.Type}\u201D не найден в документе.";
+                }
+            }
+
             // 1) Точное соответствие кода -> имя типа. Прямой и нормализованный варианты:
             //    код из .grd может отличаться от ключа карты суффиксом подключения
             //    ("TPLCPL2000T2L" против "TPLCPL2000L") или пробелом ("TPLCPL1875 L").
@@ -86,6 +131,51 @@ namespace GrdRevit.Revit
             result = best.S;
             log = $"Подобрано: {best.S.Family.Name} :: {best.S.Name} (score {best.Score})";
             return true;
+        }
+
+        /// <summary>Ищет привязку «семейство/тип Revit» по марке прибора в карте марок из DXF.</summary>
+        private static MarkTypeEntry FindMarkTypeEntry(GrdDevice device, GrdSettings settings)
+        {
+            var map = settings?.MarkTypeMap;
+            if (map == null || map.Count == 0) return null;
+
+            var raw = device?.Mark?.Trim();
+            if (string.IsNullOrEmpty(raw)) return null;
+
+            if (map.TryGetValue(raw, out var direct) && direct != null && !direct.IsEmpty)
+                return direct;
+
+            // Нормализованное совпадение: без учёта пробелов/регистра,
+            // чтобы "Classic Plus L 1,375 (…)" совпал несмотря на вариации пробелов.
+            var norm = NormalizeMarkText(raw);
+            foreach (var kv in map)
+            {
+                if (kv.Value != null && !kv.Value.IsEmpty &&
+                    string.Equals(NormalizeMarkText(kv.Key), norm, StringComparison.OrdinalIgnoreCase))
+                {
+                    return kv.Value;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Есть ли у прибора явная привязка в карте типов («Марки DXF → семейство/тип»).
+        /// Массовое применение к текущему виду назначает ТОЛЬКО такие семейства —
+        /// без угадывания по мощности/подсказке, чтобы не подставить случайный тип.
+        /// </summary>
+        public static bool HasMarkTypeEntry(GrdDevice device, GrdSettings settings)
+        {
+            return FindMarkTypeEntry(device, settings) != null;
+        }
+
+        private static string NormalizeMarkText(string s)
+        {
+            var up = (s ?? string.Empty).Trim().ToUpperInvariant();
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in up)
+                if (!char.IsWhiteSpace(c)) sb.Append(c);
+            return sb.ToString();
         }
 
         /// <summary>Ищет имя типа в карте кода по прямому и нормализованному (без суффикса подключения) совпадению.</summary>

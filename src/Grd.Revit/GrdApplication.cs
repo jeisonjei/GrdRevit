@@ -16,6 +16,7 @@ namespace GrdRevit
         private const string ButtonDataName = "GrdRevit.Open";
         private const string FamilyParamsButtonName = "GrdRevit.FamilyParams";
         private const string Box3DButtonName = "GrdRevit.Box3D";
+        private const string BoxPlanButtonName = "GrdRevit.BoxPlan";
         private const string InstanceParamsButtonName = "GrdRevit.InstanceParams";
         private const string CopyParamsButtonName = "GrdRevit.CopyParams";
         private const string ScheduleExportButtonName = "GrdRevit.ScheduleExport";
@@ -23,6 +24,9 @@ namespace GrdRevit
         private const string PdfPrintButtonName = "GrdRevit.PdfPrint";
         private const string SettingsButtonName = "GrdRevit.Settings";
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
+        private const string DxfMapButtonName = "GrdRevit.DxfMap";
+        private const string SuperRotateButtonName = "GrdRevit.SuperRotate";
+        private const string ArrangeTagsButtonName = "GrdRevit.ArrangeTags";
 
         public Result OnStartup(UIControlledApplication app)
         {
@@ -88,6 +92,24 @@ namespace GrdRevit
                 box3dData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(box3dData);
+
+                var boxPlanData = new PushButtonData(
+                    BoxPlanButtonName,
+                    "План-фрагмент\nиз 3D",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdBoxPlanCommand).FullName)
+                {
+                    ToolTip = "Создать план-фрагмент по выделенным на 3D-виде объектам: план самого низкого уровня, обрезанный по выделению",
+                    LongDescription = "Выделите объекты на 3D-виде и нажмите кнопку. " +
+                                      "Плагин определит самый низкий уровень среди объектов (по признаку уровня элементов и геометрии), " +
+                                      "создаст фрагмент этажного плана этого уровня, обрежет его точно по габаритам выделения " +
+                                      "и сразу откроет. Пределы видимости по высоте охватывают всё выделение."
+                };
+                boxPlanData.Image = LoadIcon("GrdRevit.Resources.boxplan16.png");
+                boxPlanData.LargeImage = LoadIcon("GrdRevit.Resources.boxplan32.png");
+                boxPlanData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(boxPlanData);
 
                 var instanceData = new PushButtonData(
                     InstanceParamsButtonName,
@@ -195,6 +217,65 @@ namespace GrdRevit
                 pdfPrintData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(pdfPrintData);
+
+                var superRotateData = new PushButtonData(
+                    SuperRotateButtonName,
+                    "Супер\nповорот",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdSuperRotateCommand).FullName)
+                {
+                    ToolTip = "Упрощённый поворот: кликом выберите элемент, затем кликом укажите центр — угол берётся последний запомненный",
+                    LongDescription = "Запустите команду, щёлкните по элементу, который нужно повернуть, " +
+                                      "затем щёлкните в точку центра поворота — элемент повернётся вокруг неё. " +
+                                      "Поворачивается один выбранный элемент. " +
+                                      "Угол всегда берётся последний запомненный (при первом запуске запрашивается один раз " +
+                                      "и сохраняется в настройках; положительное значение — против часовой стрелки). " +
+                                      "Центр поворота — это точная позиция второго щелчка мыши."
+                };
+                superRotateData.Image = LoadIcon("GrdRevit.Resources.rotate16.png");
+                superRotateData.LargeImage = LoadIcon("GrdRevit.Resources.rotate32.png");
+                superRotateData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(superRotateData);
+
+                var dxfMapData = new PushButtonData(
+                    DxfMapButtonName,
+                    "DXF-план\nс приборами",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdDxfMapCommand).FullName)
+                {
+                    ToolTip = "Отрисовка DXF-плана: выбрать марку прибора кликом/рамкой и применить её к элементу в Revit. Кнопка «Настройки марок» открывает сопоставление марок с семействами",
+                    LongDescription = "Открывает окно с чертежом из DXF (pan/зум/выделение рамкой). " +
+                                      "Кликом или рамкой выберите прибор на плане; «Применить к выделенному» работает с " +
+                                      "текущим выделением в Revit, режим «Применить к Revit» применяет марку к тому элементу, " +
+                                      "который вы кликните на виде Revit после выбора прибора на плане. " +
+                                      "Кнопка «Настройки марок…» открывает сопоставление «марка DXF -> семейство/тип Revit»."
+                };
+                dxfMapData.Image = LoadIcon("GrdRevit.Resources.plugin16.png");
+                dxfMapData.LargeImage = LoadIcon("GrdRevit.Resources.plugin32.png");
+                dxfMapData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(dxfMapData);
+
+                var arrangeTagsData = new PushButtonData(
+                    ArrangeTagsButtonName,
+                    "Расставить\nтэги",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdArrangeTagsCommand).FullName)
+                {
+                    ToolTip = "Раздвинуть тэги текущего вида так, чтобы они (текст и выноски) не пересекались друг с другом",
+                    LongDescription = "Ищет пересечения между тэгами на текущем виде и сдвигает их позиции, " +
+                                      "чтобы тэги не накладывались друг на друга. Учитываются только пересечения " +
+                                      "тэгов между собой (текст + выноска), стены и оборудование игнорируются. " +
+                                      "Выноска у элемента остаётся на месте, двигается только текст тэга. " +
+                                      "Тэги, которые не удалось развести, остаются на исходной позиции. " +
+                                      "Результат пишется в лог."
+                };
+                arrangeTagsData.Image = LoadIcon("GrdRevit.Resources.arrange16.png");
+                arrangeTagsData.LargeImage = LoadIcon("GrdRevit.Resources.arrange32.png");
+                arrangeTagsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(arrangeTagsData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,

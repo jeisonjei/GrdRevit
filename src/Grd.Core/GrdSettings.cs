@@ -19,9 +19,21 @@ namespace GrdRevit.Core
         /// <summary>Точное соответствие "код прибора" -> "имя типа семейства Revit".</summary>
         public Dictionary<string, string> TypeNameExactMap { get; set; } = new Dictionary<string, string>();
 
+        /// <summary>Соответствие "марка из DXF" -> семейство и тип семейства Revit.
+        /// Заполняется в окне «Марки DXF» (настройки плана DXF); при применении марки
+        /// к элементу ищется тип с таким именем семейства и именем типа.
+        /// Старые значения только с типом (без семейства) поддерживаются.</summary>
+        public Dictionary<string, MarkTypeEntry> MarkTypeMap { get; set; } = new Dictionary<string, MarkTypeEntry>();
+
         /// <summary>Сопоставление значений прибора -> имя параметра экземпляра Revit.
         /// Ключами являются фиксированные источники: "Фhl" и "Valve setting".</summary>
         public Dictionary<string, string> ValueParamMap { get; set; } = new Dictionary<string, string>();
+
+        /// <summary>Помарковая карта «марка из DXF -> параметры экземпляра Revit».
+        /// Для каждой распознанной марки можно указать, в какие параметры записывать
+        /// её значения (мощность, настройку клапана, текст выноски). Поля, оставленные
+        /// пустыми, берутся из глобальной карты <see cref="ValueParamMap"/>.</summary>
+        public Dictionary<string, MarkValueParamEntry> MarkValueMap { get; set; } = new Dictionary<string, MarkValueParamEntry>();
 
         /// <summary>Включать ли колонку "Кол-во" в таблице.</summary>
         public bool ShowCount { get; set; } = true;
@@ -31,6 +43,10 @@ namespace GrdRevit.Core
 
         /// <summary>Высота 3D-вида-фрагмента по умолчанию (в метрах) для кнопки «3D-фрагмент».</summary>
         public double Default3DBoxHeight { get; set; } = 3.0;
+
+        /// <summary>Последний угол «Супер Поворота» в градусах (0 = ещё не задан, спросим при первом запуске).
+        /// Положительное значение — против часовой стрелки, отрицательное — по часовой.</summary>
+        public double SuperRotateAngleDeg { get; set; } = 0.0;
 
         /// <summary>Имя последнего применённого шаблона 3D-вида (кнопка «3D-фрагмент»):
         /// применяется к создаваемому фрагменту автоматически.</summary>
@@ -44,6 +60,9 @@ namespace GrdRevit.Core
 
         /// <summary>Путь к файлу настроек клапанов (valve-settings.txt).</summary>
         public string LastValveSettingsPath { get; set; } = string.Empty;
+
+        /// <summary>Путь к файлу плана .dxf, проанализированному в окне «Марки DXF» (настройки плана).</summary>
+        public string LastDxfPath { get; set; } = string.Empty;
 
         /// <summary>Путь к последнему загруженному файлу общих параметров Revit (.txt).</summary>
         public string LastSharedParamsPath { get; set; } = string.Empty;
@@ -94,6 +113,39 @@ namespace GrdRevit.Core
             }
             catch { /* не критично */ }
         }
+    }
+
+    /// <summary>Привязка «марка из DXF» к семейству и типу Revit.</summary>
+    public sealed class MarkTypeEntry
+    {
+        /// <summary>Имя семейства Revit (может быть пустым для старых записей).</summary>
+        public string Family { get; set; } = string.Empty;
+
+        /// <summary>Имя типа семейства Revit.</summary>
+        public string Type { get; set; } = string.Empty;
+
+        public bool IsEmpty => string.IsNullOrEmpty(Family) && string.IsNullOrEmpty(Type);
+
+        public override string ToString()
+        {
+            return string.IsNullOrEmpty(Family) ? Type : $"{Family} :: {Type}";
+        }
+    }
+
+    /// <summary>Параметры экземпляра для записи значений одной марки из DXF.
+    /// Пустое поле = использовать глобальную карту ValueParamMap.</summary>
+    public sealed class MarkValueParamEntry
+    {
+        /// <summary>Параметр для мощности прибора, Вт (источник «Фhl»).</summary>
+        public string PowerParam { get; set; } = string.Empty;
+
+        /// <summary>Параметр для настройки клапана (источник «Valve setting», «n=…»).</summary>
+        public string ValveParam { get; set; } = string.Empty;
+
+        /// <summary>Параметр для полного текста выноски (источник «Марка»).</summary>
+        public string MarkParam { get; set; } = string.Empty;
+
+        public bool IsEmpty => string.IsNullOrEmpty(PowerParam) && string.IsNullOrEmpty(ValveParam) && string.IsNullOrEmpty(MarkParam);
     }
 
     public sealed class InstanceParamSetting

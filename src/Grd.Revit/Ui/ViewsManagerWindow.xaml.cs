@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -16,6 +17,7 @@ namespace GrdRevit.Ui
     public class ViewsRow : ObservableObject
     {
         public long Id { get; }
+        public string UniqueId { get; }
         public string KindKey { get; }
         public string KindText { get; }
         public string Scale { get; }
@@ -31,7 +33,37 @@ namespace GrdRevit.Ui
         public string SheetNumber
         {
             get => _sheetNumber;
-            set => Set(ref _sheetNumber, value);
+            set
+            {
+                if (Set(ref _sheetNumber, value))
+                    OnPropertyChanged(nameof(SheetNumberSortKey));
+            }
+        }
+
+        /// <summary>Ключ сортировки номера листа: цифровые группы дополняются ведущими
+        /// нулями, чтобы «10» шло после «9» (а не перед «2»), а остальное сохраняется.</summary>
+        public string SheetNumberSortKey => BuildSortKey(_sheetNumber);
+
+        private static string BuildSortKey(string number)
+        {
+            if (string.IsNullOrWhiteSpace(number)) return number ?? string.Empty;
+            var sb = new StringBuilder(number.Length + 8);
+            for (int i = 0; i < number.Length; i++)
+            {
+                char c = number[i];
+                if (c >= '0' && c <= '9')
+                {
+                    int j = i;
+                    while (j < number.Length && number[j] >= '0' && number[j] <= '9') j++;
+                    sb.Append(number.Substring(i, j - i).PadLeft(8, '0'));
+                    i = j - 1;
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
         }
 
         private bool _marked;
@@ -51,6 +83,7 @@ namespace GrdRevit.Ui
         public ViewsRow(ViewInfoItem v)
         {
             Id = v.Id;
+            UniqueId = v.UniqueId;
             KindKey = v.KindKey;
             KindText = v.KindText;
             Scale = v.Scale;
@@ -180,7 +213,8 @@ namespace GrdRevit.Ui
             foreach (var v in views)
                 _all.Add(new ViewsRow(v));
             foreach (var r in _all)
-                r.IsFavorite = _favIds.Contains(r.Id.ToString(CultureInfo.InvariantCulture));
+                r.IsFavorite = _favIds.Contains(r.Id.ToString(CultureInfo.InvariantCulture))
+                               || (!string.IsNullOrEmpty(r.UniqueId) && _favIds.Contains(r.UniqueId));
             InfoText.Text = "Виды активного документа: " + _all.Count + " (с учётом фильтров).";
             ApplyFilter();
             StatusText.Text = "Готово.";
@@ -200,6 +234,9 @@ namespace GrdRevit.Ui
             bool showSchedule = ChkSchedule.IsChecked == true;
             bool startsWith = RbStartsWith.IsChecked == true;
             bool onlyFav = FavOnlyCheck.IsChecked == true;
+            string[] tokens = search.Length == 0
+                ? null
+                : search.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
             if (SheetNumberCol != null)
                 SheetNumberCol.Visibility = showSheet && !showSection && !showPlan && !show3d && !showSchedule
@@ -220,11 +257,29 @@ namespace GrdRevit.Ui
                 bool nameOk = search.Length == 0;
                 if (!nameOk)
                 {
-                    nameOk = startsWith
-                        ? r.Name.StartsWith(search, StringComparison.CurrentCultureIgnoreCase)
-                        : r.Name.IndexOf(search, StringComparison.CurrentCultureIgnoreCase) >= 0;
-                    if (!nameOk)
-                        nameOk = r.KindText.IndexOf(search, StringComparison.CurrentCultureIgnoreCase) >= 0;
+                    if (startsWith)
+                    {
+                        nameOk = r.Name.StartsWith(search, StringComparison.CurrentCultureIgnoreCase);
+                        if (!nameOk)
+                            nameOk = r.KindText.IndexOf(search, StringComparison.CurrentCultureIgnoreCase) >= 0;
+                    }
+                    else
+                    {
+                        // Свободный поиск: каждое слово запроса (в любом порядке) должно
+                        // встречаться в имени, типе или номере листа.
+                        nameOk = true;
+                        foreach (var token in tokens)
+                        {
+                            bool tokenOk = r.Name.IndexOf(token, StringComparison.CurrentCultureIgnoreCase) >= 0
+                                           || r.KindText.IndexOf(token, StringComparison.CurrentCultureIgnoreCase) >= 0
+                                           || (r.SheetNumber != null && r.SheetNumber.IndexOf(token, StringComparison.CurrentCultureIgnoreCase) >= 0);
+                            if (!tokenOk)
+                            {
+                                nameOk = false;
+                                break;
+                            }
+                        }
+                    }
                 }
                 if (kindOk && nameOk && (!onlyFav || r.IsFavorite))
                     Rows.Add(r);
@@ -400,13 +455,25 @@ namespace GrdRevit.Ui
             RefocusSearch();
         }
 
-        /// <summary>Звёздочка в строке: отметить/снять избранное и переприменить фильтр.</summary>
+        /// <summary>Звёздочка в строке: отметить/снять избранное и переприменить фильтр.
+        /// Одновременно обновляем _favIds, чтобы звёздочка не пропадала после
+        /// следующего обновления списка (ApplyViews читает избранное из _favIds).</summary>
         private void OnToggleFavoriteClick(object sender, RoutedEventArgs e)
         {
             if (!(sender is Button b) || !(b.Tag is ViewsRow row)) return;
             row.IsFavorite = !row.IsFavorite;
-            FavoriteStore.Set(_docKey, "views",
-                row.Id.ToString(CultureInfo.InvariantCulture), row.IsFavorite);
+            var key = string.IsNullOrEmpty(row.UniqueId)
+                ? row.Id.ToString(CultureInfo.InvariantCulture)
+                : row.UniqueId;
+            if (row.IsFavorite)
+            {
+                if (!_favIds.Contains(key)) _favIds.Add(key);
+            }
+            else
+            {
+                _favIds.Remove(key);
+            }
+            FavoriteStore.Set(_docKey, "views", key, row.IsFavorite);
             ApplyFilter();
         }
 
