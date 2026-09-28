@@ -32,46 +32,21 @@ namespace GrdRevit.Revit
             // 0) Прямое указание пользователя: марка из DXF -> семейство и тип Revit.
             //    Заполняется в окне «Марки DXF» (настройки плана) и имеет наивысший приоритет.
             var byMark = FindMarkTypeEntry(device, settings);
+            GrdLog.Log("FamilyTypeResolver.TryResolve: символьных типов в документе=" + symbols.Count +
+                                     ", марка=\u201C" + (device.Mark ?? string.Empty) + "\u201D, запись в карте марок=" +
+                                     (byMark != null ? "\u201C" + byMark.Family + " :: " + byMark.Type + "\u201D" : "нет"));
             if (byMark != null)
             {
-                FamilySymbol found = null;
-                if (!string.IsNullOrEmpty(byMark.Family))
+                var found = ResolveMarkEntry(symbols, byMark, device, out string entryLog);
+                if (found != null)
                 {
-                    // Семейство задано: ищем тип в семействе. Если тип тоже задан —
-                    // ровно по имени типа, иначе первый тип семейства.
-                    var inFamily = symbols
-                        .Where(s => string.Equals(s.Family.Name, byMark.Family, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (inFamily.Count > 0)
-                    {
-                        found = string.IsNullOrEmpty(byMark.Type)
-                            ? inFamily[0]
-                            : inFamily.FirstOrDefault(s => string.Equals(s.Name, byMark.Type, StringComparison.OrdinalIgnoreCase));
-                    }
-                    if (found != null)
-                    {
-                        result = found;
-                        log = $"Марка: {found.Family.Name} :: {found.Name}";
-                        return true;
-                    }
-                    log = $"Марка \u201C{device.Mark}\u201D: семейство \u201C{byMark.Family}\u201D";
-                    if (!string.IsNullOrEmpty(byMark.Type)) log += " :: тип \u201C" + byMark.Type + "\u201D";
-                    log += " не найдено в документе.";
+                    result = found;
+                    log = entryLog;
+                    GrdLog.Log("FamilyTypeResolver.TryResolve: ШАГ 0 (карта марок) ПОДОБРАН: " + log);
+                    return true;
                 }
-                else if (!string.IsNullOrEmpty(byMark.Type))
-                {
-                    // Старая запись без семейства: ищем по имени типа или семейства.
-                    found = symbols.FirstOrDefault(s =>
-                        string.Equals(s.Name, byMark.Type, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(s.Family.Name, byMark.Type, StringComparison.OrdinalIgnoreCase));
-                    if (found != null)
-                    {
-                        result = found;
-                        log = $"Марка: {found.Family.Name} :: {found.Name}";
-                        return true;
-                    }
-                    log = $"Марка \u201C{device.Mark}\u201D: тип \u201C{byMark.Type}\u201D не найден в документе.";
-                }
+                log = entryLog;
+                GrdLog.Log("FamilyTypeResolver.TryResolve: ШАГ 0 (карта марок) НЕ ПОДОБРАН: " + log);
             }
 
             // 1) Точное соответствие кода -> имя типа. Прямой и нормализованный варианты:
@@ -87,9 +62,11 @@ namespace GrdRevit.Revit
                 {
                     result = exact;
                     log = $"Точная карта: {exact.Family.Name} :: {exact.Name}";
+                    GrdLog.Log("FamilyTypeResolver.TryResolve: ШАГ 1 (точная карта) ПОДОБРАН: " + log);
                     return true;
                 }
                 log = $"Не найден тип по карте \u201C{exactTypeName}\u201D";
+                GrdLog.Log("FamilyTypeResolver.TryResolve: ШАГ 1 (точная карта) НЕ ПОДОБРАН: " + log);
             }
             else if (!string.IsNullOrEmpty(exactLog))
             {
@@ -130,6 +107,7 @@ namespace GrdRevit.Revit
 
             result = best.S;
             log = $"Подобрано: {best.S.Family.Name} :: {best.S.Name} (score {best.Score})";
+            GrdLog.Log("FamilyTypeResolver.TryResolve: ШАГ 3 (подбор по мощности) ПОДОБРАН: " + log);
             return true;
         }
 
@@ -167,6 +145,150 @@ namespace GrdRevit.Revit
         public static bool HasMarkTypeEntry(GrdDevice device, GrdSettings settings)
         {
             return FindMarkTypeEntry(device, settings) != null;
+        }
+
+        /// <summary>Явная привязка «Марки DXF → семейство/тип» из карты типов (может быть null).</summary>
+        public static MarkTypeEntry GetMarkTypeEntry(GrdDevice device, GrdSettings settings)
+        {
+            return FindMarkTypeEntry(device, settings);
+        }
+
+        /// <summary>
+        /// Привязка «марка DXF → семейство/тип» с поиском семейства среди доступных:
+        /// если точное имя семейства из карты не загружено, подбирается лучшее по сходству
+        /// имён, затем внутри семейства — тип по имени из карты, иначе лучший по мощности
+        /// марки (чтобы тип менялся, а не «замирал» из-за ненайденной строки типа).
+        /// </summary>
+        private static FamilySymbol ResolveMarkEntry(List<FamilySymbol> symbols, MarkTypeEntry entry,
+            GrdDevice device, out string log)
+        {
+            log = string.Empty;
+            string mark = device?.Mark?.Trim() ?? string.Empty;
+
+            if (!string.IsNullOrEmpty(entry.Family))
+            {
+                var inFamily = symbols
+                    .Where(s => string.Equals(s.Family.Name, entry.Family, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                bool bySimilarity = false;
+                if (inFamily.Count == 0)
+                {
+                    inFamily = FindSimilarFamilySymbols(symbols, entry.Family);
+                    bySimilarity = inFamily.Count > 0;
+                }
+
+                if (inFamily.Count == 0)
+                {
+                    log = $"Марка \u201C{mark}\u201D: семейство \u201C{entry.Family}\u201D не найдено в документе. " +
+                          "Загрузите семейство или укажите другое в карте типов.";
+                    return null;
+                }
+
+                var found = PickTypeInFamily(inFamily, entry.Type, device, out string typeNote);
+                if (found != null)
+                {
+                    log = $"Марка: {found.Family.Name} :: {found.Name}";
+                    if (bySimilarity)
+                    {
+                        log = $"Марка \u201C{mark}\u201D: семейство \u201C{entry.Family}\u201D не загружено — " +
+                              $"подобрано «{found.Family.Name}». Тип: {found.Name}";
+                    }
+                    else if (!string.IsNullOrEmpty(typeNote))
+                    {
+                        log += " (" + typeNote + ")";
+                    }
+                    return found;
+                }
+
+                log = $"Марка \u201C{mark}\u201D: семейство \u201C{entry.Family}\u201D" +
+                      (bySimilarity ? " (подобранное)" : string.Empty) + " не дало пригодного типа.";
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(entry.Type))
+            {
+                // Старая запись без семейства: ищем по имени типа или семейства.
+                var found = symbols.FirstOrDefault(s =>
+                    string.Equals(s.Name, entry.Type, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Family.Name, entry.Type, StringComparison.OrdinalIgnoreCase));
+                if (found != null)
+                {
+                    log = $"Марка: {found.Family.Name} :: {found.Name}";
+                    return found;
+                }
+                log = $"Тип или семейство \u201C{entry.Type}\u201D не найдены в документе.";
+                return null;
+            }
+
+            log = $"Запись в карте типов для марки \u201C{mark}\u201D пуста.";
+            return null;
+        }
+
+        /// <summary>
+        /// Семейства, похожие на подсказку, среди загруженных в документ — по токенам имени
+        /// («TEPLA Classic Plus» ≈ «556_TEPLA_Classic_Plus») или по вхождению подстроки.
+        /// Возвращает по одному лучшему символу на семейство, отсортированные по сходству.
+        /// </summary>
+        private static List<FamilySymbol> FindSimilarFamilySymbols(List<FamilySymbol> symbols, string hint)
+        {
+            if (string.IsNullOrWhiteSpace(hint)) return new List<FamilySymbol>();
+            int need = Tokens(hint).Count == 1 ? 1 : 2;
+
+            var ranked = symbols
+                .Select(s => new { S = s, Sim = FamilySimilarity(s.Family.Name, hint) })
+                .Where(x => x.Sim >= need)
+                .GroupBy(x => x.S.Family.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.Sim).First().S)
+                .ToList();
+
+            return ranked
+                .OrderByDescending(x => FamilySimilarity(x.Family.Name, hint))
+                .ThenBy(x => x.Family.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        /// <summary>Сходство имени семейства с подсказкой: точное=100, вхождение подстроки=3, иначе число общих токенов.</summary>
+        private static int FamilySimilarity(string familyName, string hint)
+        {
+            if (string.IsNullOrEmpty(hint)) return 0;
+            if (string.Equals(familyName, hint, StringComparison.OrdinalIgnoreCase)) return 100;
+            if (familyName.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return 3;
+            if (familyName.Length == 0) return 0;
+
+            var ft = Tokens(familyName);
+            var ht = Tokens(hint);
+            int shared = 0;
+            foreach (var t in ht)
+                if (ft.Contains(t)) shared++;
+            return shared;
+        }
+
+        /// <summary>
+        /// Выбор типа внутри найденного семейства: точная строка типа из карты, иначе —
+        /// лучший по мощности марки (Score), иначе первый. Фолбэк не даёт «тип вообще не меняется».
+        /// </summary>
+        private static FamilySymbol PickTypeInFamily(List<FamilySymbol> inFamily, string typeName,
+            GrdDevice device, out string note)
+        {
+            note = string.Empty;
+            if (!string.IsNullOrEmpty(typeName))
+            {
+                var exact = inFamily.FirstOrDefault(s => string.Equals(s.Name, typeName, StringComparison.OrdinalIgnoreCase));
+                if (exact != null) return exact;
+                note = "тип \u201C" + typeName + "\u201D не найден";
+            }
+            else
+            {
+                note = "тип не задан";
+            }
+
+            var best = inFamily
+                .Select(s => new { S = s, Score = Score(s, device) })
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.S.Name, StringComparer.OrdinalIgnoreCase)
+                .First();
+            note += ": подобран ближайший тип";
+            return best.S;
         }
 
         private static string NormalizeMarkText(string s)

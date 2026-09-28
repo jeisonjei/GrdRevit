@@ -184,6 +184,25 @@ namespace GrdRevit.Core.Tests
             "0\nENDSEC\n0\nEOF\n";
 
         [Fact]
+        public void Parser_ReadsBigTextLabels()
+        {
+            string dxf =
+                "0\nSECTION\n2\nENTITIES\n" +
+                "0\nTEXT\n8\nОВ ком-рии\n62\n2\n10\n132210\n20\n88164\n30\n0\n40\n5000\n1\n1 этаж\n" +
+                "0\nTEXT\n8\nОВ ком-рии\n10\n132210\n20\n88164\n30\n0\n40\n250\n1\nмаленькая подпись\n" +
+                "0\nMTEXT\n8\n0\n10\n1\n20\n2\n30\n0\n40\n5000\n1\n25 этаж\n" +
+                "0\nENDSEC\n0\nEOF\n";
+
+            var res = DxfCalloutParser.Parse(XunitTmp.Write(dxf));
+
+            Assert.Empty(res.ParseMessages);
+            Assert.Equal(2, res.TextCount);
+            Assert.All(res.Texts, t => Assert.True(t.Height >= DxfCalloutParser.MinBigTextHeight));
+            Assert.Contains(res.Texts, t => t.Text == "1 этаж");
+            Assert.Contains(res.Texts, t => t.Text == "25 этаж");
+        }
+
+        [Fact]
         public void Parser_ReadsTruthMarksFromLeaders()
         {
             var res = DxfCalloutParser.Parse(XunitTmp.Write(PlanWithLeadersDxf));

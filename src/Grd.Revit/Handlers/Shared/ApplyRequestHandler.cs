@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -18,21 +19,47 @@ namespace GrdRevit.Revit
         private GrdDevice _row;
         private GrdSettings _settings;
         private ElementId[] _ids;
+        private KeyValuePair<ElementId, GrdDevice>[] _pairs;
+        private Action _done;
 
         /// <summary>Очередь для одиночного применения: id элемента берётся из текущего выбора.</summary>
         public void Queue(GrdDevice row, GrdSettings settings)
         {
-            Queue(null, row, settings);
+            Queue(null, row, settings, null);
         }
 
         /// <summary>Очередь применения к конкретным элементам (одному или нескольким сразу).</summary>
         public void Queue(ElementId[] ids, GrdDevice row, GrdSettings settings)
         {
+            Queue(ids, row, settings, null);
+        }
+
+        /// <summary>Очередь применения с колбэком завершения (вызывается после ShowResult, в API-контексте).</summary>
+        public void Queue(ElementId[] ids, GrdDevice row, GrdSettings settings, Action done)
+        {
             lock (_sync)
             {
                 _ids = ids;
                 _row = row;
+                _pairs = null;
                 _settings = settings;
+                _done = done;
+            }
+        }
+
+        /// <summary>
+        /// Очередь применения «каждому элементу — свой прибор» (замена нескольких несоответствий разом,
+        /// когда у элементов разные марки DXF). Каждая пара применяется отдельной транзакцией.
+        /// </summary>
+        public void Queue(KeyValuePair<ElementId, GrdDevice>[] pairs, GrdSettings settings, Action done)
+        {
+            lock (_sync)
+            {
+                _ids = null;
+                _row = null;
+                _pairs = pairs;
+                _settings = settings;
+                _done = done;
             }
         }
 
@@ -46,22 +73,29 @@ namespace GrdRevit.Revit
             GrdDevice row;
             GrdSettings settings;
             ElementId[] ids;
+            KeyValuePair<ElementId, GrdDevice>[] pairs;
+            Action done;
             lock (_sync)
             {
                 ids = _ids;
                 row = _row;
+                pairs = _pairs;
                 settings = _settings;
+                done = _done;
                 _ids = null;
                 _row = null;
+                _pairs = null;
+                _settings = null;
+                _done = null;
             }
 
-            if (row == null)
+            if (row == null && pairs == null)
             {
                 GrdLog.Log("ApplyHandler.Execute: нет запроса в очереди");
                 return;
             }
 
-            GrdLog.Log("ApplyHandler.Execute: обработка " + row.Code);
+            GrdLog.Log("ApplyHandler.Execute: обработка " + (row?.Code ?? (pairs != null ? pairs.Length + " пар(ы)" : "?")));
             string result;
             try
             {
@@ -69,6 +103,10 @@ namespace GrdRevit.Revit
                 if (uiDoc == null)
                 {
                     result = "Нет активного документа.";
+                }
+                else if (pairs != null && pairs.Length > 0)
+                {
+                    result = ApplyManyPairs(app, pairs, settings);
                 }
                 else if (ids != null && ids.Length > 0)
                 {
@@ -95,6 +133,15 @@ namespace GrdRevit.Revit
 
             GrdLog.Log("ApplyHandler.Execute: результат: " + result);
             ShowResult(result, row);
+
+            try
+            {
+                done?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ApplyHandler.Execute: колбэк завершения упал: " + ex);
+            }
         }
 
         /// <summary>Применяет марку к каждому из выбранных элементов (отдельная транзакция на элемент).</summary>
@@ -119,6 +166,31 @@ namespace GrdRevit.Revit
 
             string output = sb.ToString();
             GrdLog.Log("ApplyHandler.ApplyMany: " + output);
+            return output;
+        }
+
+        /// <summary>Применяет каждой паре «элемент → свой прибор» (отдельная транзакция на элемент).</summary>
+        private static string ApplyManyPairs(UIApplication app, KeyValuePair<ElementId, GrdDevice>[] pairs, GrdSettings settings)
+        {
+            var sb = new System.Text.StringBuilder();
+            var failures = new System.Collections.Generic.List<string>();
+            int applied = 0;
+            foreach (var p in pairs)
+            {
+                var r = ApplyService.Apply(app, p.Key, p.Value, settings);
+                if (string.IsNullOrEmpty(r)) { applied++; continue; }
+                if (IsFailure(r)) failures.Add(FirstLine(r));
+                else applied++;
+            }
+
+            if (failures.Count == 0)
+                sb.Append("Применено к ").Append(applied).Append(Plural(applied, " элементу", " элементам", " элементам")).Append('.');
+            else
+                sb.Append("Применено к ").Append(applied).Append(" из ").Append(pairs.Length).Append(". Не применено: ")
+                  .Append(string.Join("; ", failures));
+
+            string output = sb.ToString();
+            GrdLog.Log("ApplyHandler.ApplyManyPairs: " + output);
             return output;
         }
 

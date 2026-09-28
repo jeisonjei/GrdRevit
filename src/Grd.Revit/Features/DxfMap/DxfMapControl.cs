@@ -25,8 +25,11 @@ namespace GrdRevit.Ui
 
         private List<DxfGeomLine> _lines = new List<DxfGeomLine>();
         private List<DxfCalloutItem> _devices = new List<DxfCalloutItem>();
+        private List<DxfTextLabel> _texts = new List<DxfTextLabel>();
         private readonly HashSet<DxfCalloutItem> _selected = new HashSet<DxfCalloutItem>();
         private readonly HashSet<DxfCalloutItem> _warnings = new HashSet<DxfCalloutItem>();
+        private readonly HashSet<DxfCalloutItem> _typeHighlight = new HashSet<DxfCalloutItem>();
+        private readonly HashSet<DxfCalloutItem> _mismatch = new HashSet<DxfCalloutItem>();
 
         private double _scale = 1.0;
         private double _ox;              // мировая X левого края
@@ -82,12 +85,16 @@ namespace GrdRevit.Ui
             SizeChanged += OnSizeChanged;
         }
 
-        public void SetContent(IReadOnlyCollection<DxfGeomLine> lines, IReadOnlyCollection<DxfCalloutItem> devices)
+        public void SetContent(IReadOnlyCollection<DxfGeomLine> lines, IReadOnlyCollection<DxfCalloutItem> devices,
+            IReadOnlyCollection<DxfTextLabel> texts)
         {
             _lines = lines?.ToList() ?? new List<DxfGeomLine>();
             _devices = devices?.ToList() ?? new List<DxfCalloutItem>();
+            _texts = texts?.ToList() ?? new List<DxfTextLabel>();
             _selected.Clear();
             _warnings.Clear();
+            _typeHighlight.Clear();
+            _mismatch.Clear();
             _hovered = null;
             FitAll();
         }
@@ -126,6 +133,72 @@ namespace GrdRevit.Ui
             InvalidateVisual();
         }
 
+        /// <summary>Добавить прибор к выделению (не очищая остальное).</summary>
+        public void AddToSelection(DxfCalloutItem d)
+        {
+            if (d == null || _selected.Contains(d)) return;
+            _selected.Add(d);
+            SelectionChanged?.Invoke();
+            InvalidateVisual();
+        }
+
+        /// <summary>Снять выделение с одного прибора.</summary>
+        public void RemoveFromSelection(DxfCalloutItem d)
+        {
+            if (d == null || !_selected.Remove(d)) return;
+            SelectionChanged?.Invoke();
+            InvalidateVisual();
+        }
+
+        /// <summary>Заменить выделение ровно этими приборами (остальные снимаются).</summary>
+        public void SetSelection(IEnumerable<DxfCalloutItem> items)
+        {
+            _selected.Clear();
+            if (items != null)
+            {
+                foreach (var d in items)
+                    if (d != null) _selected.Add(d);
+            }
+            SelectionChanged?.Invoke();
+            InvalidateVisual();
+        }
+
+        /// <summary>Подсветить на плане приборы выбранного типа (марки).</summary>
+        public void SetTypeHighlight(IEnumerable<DxfCalloutItem> items)
+        {
+            _typeHighlight.Clear();
+            if (items != null)
+            {
+                foreach (var d in items) if (d != null) _typeHighlight.Add(d);
+            }
+            InvalidateVisual();
+        }
+
+        public void ClearTypeHighlight()
+        {
+            if (_typeHighlight.Count == 0) return;
+            _typeHighlight.Clear();
+            InvalidateVisual();
+        }
+
+        /// <summary>Подсветить на плане выбранные приборы, чей тип в Revit НЕ соответствует марке DXF.</summary>
+        public void SetMismatch(IEnumerable<DxfCalloutItem> items)
+        {
+            _mismatch.Clear();
+            if (items != null)
+            {
+                foreach (var d in items) if (d != null) _mismatch.Add(d);
+            }
+            InvalidateVisual();
+        }
+
+        public void ClearMismatch()
+        {
+            if (_mismatch.Count == 0) return;
+            _mismatch.Clear();
+            InvalidateVisual();
+        }
+
         public void FitAll()
         {
             if (ActualWidth <= 0 || ActualHeight <= 0)
@@ -149,6 +222,12 @@ namespace GrdRevit.Ui
                 any = true;
                 minX = Math.Min(minX, d.X); maxX = Math.Max(maxX, d.X);
                 minY = Math.Min(minY, d.Y); maxY = Math.Max(maxY, d.Y);
+            }
+            foreach (var t in _texts)
+            {
+                any = true;
+                minX = Math.Min(minX, t.X); maxX = Math.Max(maxX, t.X);
+                minY = Math.Min(minY, t.Y); maxY = Math.Max(maxY, t.Y);
             }
 
             if (!any)
@@ -432,7 +511,12 @@ namespace GrdRevit.Ui
 
         private static readonly Brush ValveSettingBrush = Brushes.DarkSlateGray;
 
+        /// <summary>Цвет крупных надписей плана (тёмно-жёлтый — читается на белом фоне, как «жёлтый» текст DWG).</summary>
+        private static readonly Brush BigTextBrush = CreateBrush(255, 0x9A, 0x67, 0x00);
+
         private static readonly Pen WarningRing = CreatePen(Color.FromRgb(0xC6, 0x28, 0x28), 2.0);
+        private static readonly Pen TypeHighlightRing = CreatePen(Color.FromRgb(0x2E, 0x8B, 0x57), 2.2);
+        private static readonly Pen MismatchRing = CreatePen(Color.FromRgb(0xB2, 0x22, 0x22), 2.4);
 
         private static readonly Brush FrameWindowFill = CreateBrush(160, 201, 133, 255);
         private static readonly Pen FrameWindowPen = CreatePen(Color.FromRgb(0x8B, 0x5C, 0xF6), 1.0);
@@ -458,6 +542,8 @@ namespace GrdRevit.Ui
             foreach (var l in _lines)
                 DrawLine(dc, l);
 
+            DrawTextLabels(dc);
+
             for (int i = 0; i < _devices.Count; i++)
                 DrawDevice(dc, _devices[i]);
 
@@ -475,12 +561,48 @@ namespace GrdRevit.Ui
             dc.DrawLine(SelectPen(l.Layer), WorldToScreen(l.X1, l.Y1), WorldToScreen(l.X2, l.Y2));
         }
 
+        /// <summary>Крупные надписи плана (этажи/зоны): рисуются в мире, размер шрифта пропорционален высоте текста.</summary>
+        private void DrawTextLabels(DrawingContext dc)
+        {
+            if (_texts.Count == 0) return;
+            var tf = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+            foreach (var t in _texts)
+            {
+                string text = CleanLabelText(t.Text);
+                if (text.Length == 0) continue;
+
+                double size = Math.Max(9.0, t.Height * _scale * 0.9);
+                var ft = new FormattedText(text,
+                    System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                    tf, size, BigTextBrush);
+                var p = WorldToScreen(t.X, t.Y);
+                dc.DrawText(ft, new Point(p.X + 2, p.Y - ft.Height));
+            }
+        }
+
+        /// <summary>Убирает разметку MTEXT («{…}», «\P» и прочие коды) — для ярлыков вида «1 этаж» остаётся чистый текст.</summary>
+        private static string CleanLabelText(string text)
+        {
+            var s = (text ?? string.Empty).Replace("\\P", " ");
+            var sb = new System.Text.StringBuilder(s.Length);
+            int braces = 0;
+            foreach (char c in s)
+            {
+                if (c == '{') { braces++; continue; }
+                if (c == '}') { braces = Math.Max(0, braces - 1); continue; }
+                if (braces == 0) sb.Append(c);
+            }
+            return sb.ToString().Trim();
+        }
+
         private void DrawDevice(DrawingContext dc, DxfCalloutItem d)
         {
             var p = WorldToScreen(d.X, d.Y);
             bool selected = _selected.Contains(d);
             bool hover = ReferenceEquals(_hovered, d);
             bool warning = _warnings.Contains(d);
+            bool typeHl = _typeHighlight.Contains(d);
+            bool mismatch = _mismatch.Contains(d);
             double r = selected ? 7 : hover ? 6 : 5;
 
             var brush = selected ? DeviceFillSelected : hover ? DeviceFillHover : DeviceFill;
@@ -489,6 +611,16 @@ namespace GrdRevit.Ui
             if (warning)
             {
                 dc.DrawEllipse(null, WarningRing, p, r + 4, r + 4);
+            }
+
+            if (mismatch)
+            {
+                dc.DrawEllipse(null, MismatchRing, p, r + 5, r + 5);
+            }
+
+            if (typeHl)
+            {
+                dc.DrawEllipse(null, TypeHighlightRing, p, r + 5, r + 5);
             }
 
             if (_showValveSettings && d.Device != null &&
@@ -520,26 +652,6 @@ namespace GrdRevit.Ui
                     dc.DrawText(ft, new Point(tx, ty));
                     ty += ft.Height;
                 }
-            }
-
-            if (hover || selected)
-            {
-                var label = d.Block ?? string.Empty;
-                if (d.Size.HasValue)
-                    label += "  " + d.Size.Value.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " мм";
-                if (d.Device != null && !string.IsNullOrEmpty(d.Device.Mark))
-                    label += "\nМарка: " + d.Device.Mark;
-
-                var ft = new FormattedText(label,
-                    System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                    new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
-                    selected ? 12 : 10, selected ? Brushes.DarkRed : Brushes.Black);
-                double tx = p.X + 9, ty = p.Y - 6;
-                if (tx + ft.Width > ActualWidth) tx = Math.Max(0, p.X - 9 - ft.Width);
-                if (ty + ft.Height > ActualHeight) ty = Math.Max(0, ActualHeight - ft.Height);
-                dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(215, 255, 255, 235)), null,
-                    new Rect(tx, ty, ft.Width, ft.Height));
-                dc.DrawText(ft, new Point(tx, ty));
             }
         }
 

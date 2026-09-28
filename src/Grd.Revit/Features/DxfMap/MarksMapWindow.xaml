@@ -51,6 +51,25 @@
                           CellEditEnding="OnCellEditEnding">
                     <DataGrid.Columns>
                         <DataGridTextColumn x:Name="ColMark" Header="Марка (текст выноски)" Binding="{Binding MarkText}" Width="3*" IsReadOnly="True"/>
+                        <DataGridTemplateColumn x:Name="ColStatus" Header="Статус" Width="0.8*" IsReadOnly="True">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StatusLabel}" VerticalAlignment="Center" Margin="4,0"
+                                               FontWeight="Medium">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                        <Setter Property="Foreground" Value="#B3261E"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn x:Name="ColCode" Header="Код" Binding="{Binding Code}" Width="1.2*" IsReadOnly="True"/>
                         <DataGridTextColumn x:Name="ColCapacity" Header="Мощность, Вт" Binding="{Binding CapacityLabel}" Width="0.9*" IsReadOnly="True"/>
                         <DataGridTextColumn x:Name="ColCount" Header="Приборов на плане" Binding="{Binding Count}" Width="0.9*" IsReadOnly="True"/>
@@ -90,14 +109,24 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="" Width="56">
+                        <DataGridTemplateColumn x:Name="ColDelete" Header="" Width="74">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Button Content="✓" FontSize="12" Padding="5,1"
-                                            Background="#DDEEF7" BorderBrush="#9CC6E5"
-                                            ToolTip="Взять семейство и тип из текущего выделения в Revit"
-                                            Click="OnPickTypeFromSelectionForRow"
-                                            Tag="{Binding}"/>
+                                    <Button Content="Удалить" FontSize="11" Padding="6,2"
+                                            Tag="{Binding}"
+                                            ToolTip="Марки больше нет в файле DXF. Убрать её привязку из карты типов (вступает в силу после «Сохранить»)."
+                                            Click="OnDeleteRow">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource GhostButtonStyle}">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

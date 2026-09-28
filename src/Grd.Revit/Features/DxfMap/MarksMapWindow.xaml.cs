@@ -31,6 +31,12 @@ namespace GrdRevit.Ui
         public string CapacityLabel { get => _capacityLabel; set => Set(ref _capacityLabel, value); }
         public int Count { get => _count; set => Set(ref _count, value); }
 
+        /// <summary>Марка есть в текущем файле DXF. False — привязка сохранилась в карте типов, но марка в файле больше не встречается.</summary>
+        public bool IsMissing { get; set; }
+
+        /// <summary>Текст колонки «Статус».</summary>
+        public string StatusLabel => IsMissing ? "нет в файле" : string.Empty;
+
         /// <summary>Подсказка семейства из кода прибора (для «умного» сопоставления).</summary>
         public string FamilyHint { get => _familyHint; set => Set(ref _familyHint, value); }
 
@@ -191,6 +197,7 @@ namespace GrdRevit.Ui
             try
             {
                 Cursor = System.Windows.Input.Cursors.Wait;
+                PersistMarkMapIfEdited();
                 _plan = DxfCalloutParser.Parse(path);
 
                 RevitContext.Settings.LastDxfPath = path;
@@ -216,7 +223,8 @@ namespace GrdRevit.Ui
             }
         }
 
-        /// <summary>Собирает каталог марок с количеством вхождений на плане и значением из сохранённой карты.</summary>
+        /// <summary>Собирает каталог марок с количеством вхождений на плане и значением из сохранённой карты.
+        /// Сохранённые привязки марок, которых не оказалось в текущем файле, добавляются отдельно с флагом «нет в файле».</summary>
         private void BuildRows()
         {
             _rows.Clear();
@@ -228,7 +236,7 @@ namespace GrdRevit.Ui
             }
 
             var savedMap = RevitContext.Settings.MarkTypeMap ?? new Dictionary<string, MarkTypeEntry>();
-var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, string>();
+            var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, string>();
 
             _valueRows.Add(new MarkValueMapRow
             {
@@ -236,6 +244,8 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
                 ValveParam = valueMap.TryGetValue("Valve setting", out var vv) ? vv ?? string.Empty : string.Empty,
                 MarkParam = valueMap.TryGetValue("Марка", out var mk) ? mk ?? string.Empty : string.Empty
             });
+
+            var presentNorm = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var dev in _plan.MarkDevices.OrderBy(d => d.Mark, StringComparer.OrdinalIgnoreCase))
             {
@@ -280,6 +290,30 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
                 };
                 row.SetCatalog(_catalog, _catalog.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList());
                 _rows.Add(row);
+
+                string norm = Normalize(mark);
+                if (norm.Length > 0) presentNorm.Add(norm);
+            }
+
+            // привязки из сохранённой карты, которых нет в текущем файле — показываем «нет в файле» с кнопкой «Удалить»
+            var catalogNames = _catalog.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var kv in savedMap)
+            {
+                if (kv.Value == null || kv.Value.IsEmpty) continue;
+                string markKey = (kv.Key ?? string.Empty).Trim();
+                string norm = Normalize(markKey);
+                if (norm.Length == 0 || presentNorm.Contains(norm)) continue;
+                presentNorm.Add(norm);
+
+                var row = new MarksMapRow
+                {
+                    MarkText = markKey,
+                    IsMissing = true,
+                    Family = kv.Value.Family ?? string.Empty,
+                    TypeName = kv.Value.Type ?? string.Empty
+                };
+                row.SetCatalog(_catalog, catalogNames);
+                _rows.Add(row);
             }
         }
 
@@ -288,9 +322,11 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
             string familiesNote = _catalog.Count > 0
                 ? "  |  Семейств мех. оборудования: " + _catalog.Count
                 : "  |  Семейства загружаются из Revit…";
+            int missing = _rows.Count(r => r.IsMissing);
             SummaryLabel.Text = _plan == null || _plan.MarkDevices.Count == 0
                 ? "В файле не найдено марок приборов (нет шаблонов-выносок DCAD_LEADER)." + familiesNote
-                : $"Марок: {_rows.Count}  |  Приборов на плане: {_plan.HeaterCount}" + familiesNote;
+                : $"Марок: {_rows.Count}  |  Приборов на плане: {_plan.HeaterCount}" +
+                  (missing > 0 ? $"  |  Не в файле: {missing}" : string.Empty) + familiesNote;
         }
 
         private static string Normalize(string s)
@@ -358,55 +394,7 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
                 SnackBar.Show("В активном документе нет семейств категории «Механическое оборудование».", SnackBarKind.Info);
         }
 
-        /// <summary>Кнопка «✓» в строке: подставить семейство и тип из текущего выделения в Revit.</summary>
-        private void OnPickTypeFromSelectionForRow(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button { Tag: MarksMapRow row } == false) return;
-
-            var ev = RevitContext.PickEvent;
-            var handler = RevitContext.PickHandler;
-            if (ev == null || handler == null)
-            {
-                SnackBar.Show("Обработчик чтения типа не доступен.", SnackBarKind.Error);
-                return;
-            }
-
-            GrdLog.Log("MarksMapWindow: запрос семейства и типов из выделенного элемента");
-            handler.Queue(result =>
-            {
-                try
-                {
-                    if (!result.Ok || result.TypeNames == null || result.TypeNames.Count == 0)
-                    {
-                        GrdLog.Log("MarksMapWindow: нет типа - " + result.Error);
-                        Dispatcher.BeginInvoke(new Action(() =>
-                            SnackBar.Show(result.Error ?? "Выберите элемент семейства в Revit.", SnackBarKind.Error)));
-                        return;
-                    }
-
-                    string familyName = result.FamilyName ?? string.Empty;
-                    string typeName = result.TypeNames[0];
-                    if (string.Equals(typeName, row.TypeName?.Trim(), StringComparison.Ordinal) &&
-                        string.Equals(familyName, row.Family?.Trim(), StringComparison.Ordinal))
-                    {
-                        SnackBar.Show("Семейство и тип уже указаны: «" + familyName + " / " + typeName + "».", SnackBarKind.Info);
-                        return;
-                    }
-                    row.Family = familyName;
-                    row.TypeName = typeName;
-                    _edited = true;
-                    SnackBar.Show("Марка «" + row.MarkText + "» -> «" + familyName + " / " + typeName + "»", SnackBarKind.Success);
-                }
-                catch (Exception ex)
-                {
-                    GrdLog.Log("MarksMapWindow pick callback: EXCEPTION " + ex);
-                }
-            });
-            ev.Raise();
-        }
-
-        /// <summary>
-        /// Кнопка «Взять параметры из выделенного»: считывает все параметры (проектные и
+        /// <summary>Кнопка «Взять параметры из выделенного»: считывает все параметры (проектные и
         /// семейственные, экземпляр и тип) семейства выбранного в Revit элемента и наполняет
         /// выпадающие списки вкладки «Значения марок → параметры».
         /// </summary>
@@ -452,13 +440,11 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
             ev.Raise();
         }
 
-        private void OnSave(object sender, RoutedEventArgs e)
+        /// <summary>Строит карту «марка → семейство/тип» из текущих строк таблицы (только заполненные).</summary>
+        private Dictionary<string, MarkTypeEntry> BuildMarkMap()
         {
             MarksGrid.CommitEdit(DataGridEditingUnit.Row, true);
-            MarkValueGrid.CommitEdit(DataGridEditingUnit.Row, true);
-
             var map = new Dictionary<string, MarkTypeEntry>(StringComparer.OrdinalIgnoreCase);
-            int filled = 0;
             foreach (var row in _rows)
             {
                 var mark = row.MarkText?.Trim();
@@ -467,8 +453,38 @@ var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, str
                 var type = row.TypeName?.Trim();
                 if (string.IsNullOrEmpty(family) && string.IsNullOrEmpty(type)) continue;
                 map[mark] = new MarkTypeEntry { Family = family ?? string.Empty, Type = type ?? string.Empty };
-                filled++;
             }
+            return map;
+        }
+
+        /// <summary>Если в таблице есть несохранённые правки — сохраняет карту марок перед перезагрузкой DXF,
+        /// чтобы заполненные привязки не терялись.</summary>
+        private void PersistMarkMapIfEdited()
+        {
+            if (!_edited || _rows.Count == 0) return;
+            RevitContext.Settings.MarkTypeMap = BuildMarkMap();
+            RevitContext.SaveSettings();
+            GrdLog.Log("MarksMapWindow: карта марок автосохранена перед перезагрузкой DXF");
+        }
+
+        /// <summary>Кнопка «Удалить» в строке «нет в файле»: убирает привязку марки из таблицы (после «Сохранить» — из карты типов).</summary>
+        private void OnDeleteRow(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button { Tag: MarksMapRow row })) return;
+            if (_rows.Remove(row))
+            {
+                _edited = true;
+                UpdateSummary();
+            }
+        }
+
+        private void OnSave(object sender, RoutedEventArgs e)
+        {
+            MarksGrid.CommitEdit(DataGridEditingUnit.Row, true);
+            MarkValueGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+            var map = BuildMarkMap();
+            int filled = map.Count;
 
             var valueMap = RevitContext.Settings.ValueParamMap ?? new Dictionary<string, string>();
             var valueRow = _valueRows.FirstOrDefault();

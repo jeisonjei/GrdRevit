@@ -28,6 +28,10 @@ namespace GrdRevit.Revit
                     return "Выбранный элемент не является экземпляром семейства.";
                 }
 
+                GrdLog.Log("ApplyService.Apply: id=" + selectedId + ", марка=\u201C" + (parsed?.Mark ?? string.Empty) +
+                    "\u201D, код=" + (parsed?.Code ?? string.Empty) +
+                    ", семейство-подсказка=\u201C" + (parsed?.FamilyHint ?? string.Empty) + "\u201D");
+
                 ElementId appliedId = ElementId.InvalidElementId;
                 string result;
 
@@ -40,15 +44,20 @@ namespace GrdRevit.Revit
                         if (!FamilyTypeResolver.TryResolve(doc, parsed, settings, out var symbol, out var resolveLog))
                         {
                             t.RollBack();
+                            GrdLog.Log("ApplyService.Apply: ТИП НЕ РЕШЁН. detail: " + resolveLog);
                             return resolveLog;
                         }
+
+                        var currentFamily = instance.Symbol?.Family?.Name ?? string.Empty;
+                        var targetFamily = symbol.Family.Name;
+                        GrdLog.Log("ApplyService.Apply: resolved=" + symbol.Family.Name + " :: " + symbol.Name +
+                                   " | текущее семейство=\u201C" + currentFamily + "\u201D, целевое=\u201C" + targetFamily + "\u201D" +
+                                   " (resolveLog: " + resolveLog + ")");
 
                         var sb = new StringBuilder();
                         sb.AppendLine(resolveLog);
 
                         Element target = instance;
-                        var currentFamily = instance.Symbol?.Family?.Name ?? string.Empty;
-                        var targetFamily = symbol.Family.Name;
 
                         if (!string.Equals(currentFamily, targetFamily, StringComparison.OrdinalIgnoreCase))
                         {
@@ -77,6 +86,8 @@ namespace GrdRevit.Revit
 
                         t.Commit();
                         result = sb.ToString();
+                        GrdLog.Log("ApplyService.Apply: коммит ok (id=" + appliedId + "); итог: " +
+                                   result.Replace("\r\n", " | "));
                     }
                     catch (Exception ex)
                     {

@@ -57,6 +57,20 @@ namespace GrdRevit.Core
         public override string ToString() => $"{Layer} ({X1:N0}, {Y1:N0}) -> ({X2:N0}, {Y2:N0})";
     }
 
+    /// <summary>Крупный текстовый ярлык плана (TEXT/MTEXT с большой высотой шрифта) — например, надпись этажа.</summary>
+    public sealed class DxfTextLabel
+    {
+        public string Layer;
+        public double X;
+        public double Y;
+        public double Height;
+
+        /// <summary>Текст ярлыка (без разметки MTEXT).</summary>
+        public string Text;
+
+        public override string ToString() => $"{Layer} ({X:N0}, {Y:N0}) '{Text}'";
+    }
+
     /// <summary>Этаж/кластер плана: набор приборов в одной зоне координат.</summary>
     public sealed class DxfFloor
     {
@@ -86,11 +100,15 @@ namespace GrdRevit.Core
         /// <summary>Геометрия плана: отрезки линий/контуров (LINE, LWPOLYLINE, POLYLINE+VERTEX).</summary>
         public List<DxfGeomLine> Lines = new List<DxfGeomLine>();
 
+        /// <summary>Крупные надписи плана (TEXT/MTEXT с высотой шрифта ≥ MinBigTextHeight): этажи, названия зон.</summary>
+        public List<DxfTextLabel> Texts = new List<DxfTextLabel>();
+
         /// <summary>Выноски (MULTILEADER) из ENTITIES: текст марки/настройки, привязанный к прибору.</summary>
         public List<DxfLeaderText> Leaders = new List<DxfLeaderText>();
 
         public int LineCount => Lines.Count;
         public int LeaderCount => Leaders.Count;
+        public int TextCount => Texts.Count;
 
         /// <summary>Уникальные тексты выносок (марки) из определений блоков DCAD_LEADER.</summary>
         public List<string> Marks = new List<string>();
@@ -121,6 +139,7 @@ namespace GrdRevit.Core
     ///   - приборы: INSERT-блоки на слое DCAD-HeaterNodesOnPlan (имена Bottom_R_1500, Side_DPR_1000 …);
     ///   - марки: определения блоков DCAD_LEADER_* хранят текст выноски («Classic Plus L 1,375 (…)»).
     ///     На плане выноски не вставлены — это шаблоны. Собираем каталог уникальных марок;
+    ///   - крупный текст: TEXT/MTEXT с высотой шрифта ≥ MinBigTextHeight (надписи этажей, зон);
     ///   - этажи: кластеры координат;
     ///   - рекомендация: размер из имени блока ↔ ближайшая мощность марки.
     /// Особенности формата: значения строк UTF-8 (заголовок $DWGCODEPAGE может врать), коды
@@ -131,6 +150,8 @@ namespace GrdRevit.Core
         public const string HeaterLayer = "DCAD-HeaterNodesOnPlan";
         public const int DefaultFloorMergeGap = 50000; // мм: порог слияния точек в один этаж
         public const int MaxGeometrySegments = 500000;  // защитный предел отрезков геометрии
+        public const int MaxTextLabels = 5000;          // защитный предел крупных надписей
+        public const double MinBigTextHeight = 1000;    // мм: надписи «этаж/зона» крупнее поясняющего текста
         public const double DefaultLeaderMarkDistance = 300; // мм, допуск: остриё выноски в центре прямоугольника прибора
 
         private static readonly Regex BlockSize = new Regex(@"_(\d+)$", RegexOptions.Compiled);
@@ -313,6 +334,11 @@ namespace GrdRevit.Core
             string polyLayer = null;  // слой POLYLINE сохраняется на время цепочки VERTEX
             double? pvx = null, pvy = null;
 
+            // TEXT/MTEXT: крупные надписи (этажи, зоны). Текст — код 1 (MTEXT: 1/3), высота — 40.
+            string tlLayer = null;
+            double? tlX = null, tlY = null, tlH = null;
+            string tlText = null;
+
             void AddVertex(List<double[]> list)
             {
                 if (pvx.HasValue && pvy.HasValue) list.Add(new[] { pvx.Value, pvy.Value });
@@ -392,6 +418,25 @@ namespace GrdRevit.Core
                             inPolyChain = false;
                         }
                         break;
+                    case "TEXT":
+                    case "MTEXT":
+                        if (tlH.HasValue && tlH.Value >= MinBigTextHeight &&
+                            tlX.HasValue && tlY.HasValue &&
+                            !string.IsNullOrWhiteSpace(tlText))
+                        {
+                            if (res.Texts.Count < MaxTextLabels)
+                            {
+                                res.Texts.Add(new DxfTextLabel
+                                {
+                                    Layer = tlLayer ?? string.Empty,
+                                    X = tlX.Value,
+                                    Y = tlY.Value,
+                                    Height = tlH.Value,
+                                    Text = tlText.Trim()
+                                });
+                            }
+                        }
+                        break;
                 }
             }
 
@@ -405,6 +450,7 @@ namespace GrdRevit.Core
                 mlText = null; mlX = null; mlY = null;
                 mlBlockHandle = null; mlInLeaderLine = false;
                 mlTipX = null; mlTipY = null;
+                tlLayer = null; tlX = null; tlY = null; tlH = null; tlText = null;
             }
 
             while ((line = sr.ReadLine()) != null)
@@ -495,6 +541,15 @@ namespace GrdRevit.Core
                             }
                             else if (mlY == null) mlY = v;
                         }
+                        break;
+                    case "TEXT":
+                    case "MTEXT":
+                        if (code == "8") tlLayer = value;
+                        else if (code == "10") tlX = ParseCoord(value);
+                        else if (code == "20") tlY = ParseCoord(value);
+                        else if (code == "40") tlH = ParseCoord(value);
+                        else if (code == "1") tlText = (tlText ?? string.Empty) + value;
+                        else if (code == "3" && tlText == null) tlText = value;
                         break;
                 }
             }

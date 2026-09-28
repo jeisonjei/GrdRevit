@@ -42,6 +42,11 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _applyToViewEvent;
         public static Autodesk.Revit.UI.ExternalEvent ApplyToViewEvent => _applyToViewEvent;
 
+        /// <summary>Маршалит выделение приборов DXF на текущем виде (см. «Применить к текущему виду»).</summary>
+        public static Revit.SelectInRevitHandler SelectInRevitHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _selectInRevitEvent;
+        public static Autodesk.Revit.UI.ExternalEvent SelectInRevitEvent => _selectInRevitEvent;
+
         /// <summary>Маршалит чтение типа выделенного элемента для автозаполнения карты кода в настройках.</summary>
         public static Revit.PickTypeHandler PickHandler;
         private static Autodesk.Revit.UI.ExternalEvent _pickEvent;
@@ -120,6 +125,12 @@ namespace GrdRevit
                 ApplyToViewHandler = new Revit.ApplyToViewHandler();
                 _applyToViewEvent = Autodesk.Revit.UI.ExternalEvent.Create(ApplyToViewHandler);
                 GrdLog.Log("EnsureHandlers: ApplyToViewEvent created");
+            }
+            if (_selectInRevitEvent == null)
+            {
+                SelectInRevitHandler = new Revit.SelectInRevitHandler();
+                _selectInRevitEvent = Autodesk.Revit.UI.ExternalEvent.Create(SelectInRevitHandler);
+                GrdLog.Log("EnsureHandlers: SelectInRevitEvent created");
             }
             if (_pickEvent == null)
             {
