@@ -26,7 +26,7 @@ namespace GrdRevit
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
         private const string DxfMapButtonName = "GrdRevit.DxfMap";
         private const string SuperRotateButtonName = "GrdRevit.SuperRotate";
-        private const string ArrangeTagsButtonName = "GrdRevit.ArrangeTags";
+        private const string RadiatorTagsButtonName = "GrdRevit.RadiatorTags";
 
         public Result OnStartup(UIControlledApplication app)
         {
@@ -257,25 +257,28 @@ namespace GrdRevit
 
                 panel.AddItem(dxfMapData);
 
-                var arrangeTagsData = new PushButtonData(
-                    ArrangeTagsButtonName,
-                    "Расставить\nтэги",
+                var radiatorTagsData = new PushButtonData(
+                    RadiatorTagsButtonName,
+                    "Расставить тэги\nпо границе",
                     Assembly.GetExecutingAssembly().Location,
-                    typeof(GrdArrangeTagsCommand).FullName)
+                    typeof(GrdRadiatorTagsCommand).FullName)
                 {
-                    ToolTip = "Раздвинуть тэги текущего вида так, чтобы они (текст и выноски) не пересекались друг с другом",
-                    LongDescription = "Ищет пересечения между тэгами на текущем виде и сдвигает их позиции, " +
-                                      "чтобы тэги не накладывались друг на друга. Учитываются только пересечения " +
-                                      "тэгов между собой (текст + выноска), стены и оборудование игнорируются. " +
-                                      "Выноска у элемента остаётся на месте, двигается только текст тэга. " +
-                                      "Тэги, которые не удалось развести, остаются на исходной позиции. " +
+                    ToolTip = "Выровнять выбранные тэги (например, радиаторов) вдоль начерченной линии-границы: " +
+                              "тэги встают рядами по выбранной стороне, при нехватке места — несколькими колонками",
+                    LongDescription = "Взаимодействие: 1) заранее выберите тэги на виде; 2) запустите команду; " +
+                                      "3) начертите линию-границу двумя кликами (как «Ось зеркала»); " +
+                                      "4) кликните с той стороны линии, куда сдвинуть тэги. Дальше тэги " +
+                                      "расставляются рядами вдоль линии: каждый тэг — напротив своего якоря, " +
+                                      "а при нехватке места по длине — укладываются во внутренние ряды-колонки. " +
+                                      "Прямая выноска к якорю сохраняется; при пересечении чужого текста " +
+                                      "позиция тэга в ряду подбирается так, чтобы выноска шла мимо. " +
                                       "Результат пишется в лог."
                 };
-                arrangeTagsData.Image = LoadIcon("GrdRevit.Resources.arrange16.png");
-                arrangeTagsData.LargeImage = LoadIcon("GrdRevit.Resources.arrange32.png");
-                arrangeTagsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+                radiatorTagsData.Image = LoadIcon("GrdRevit.Resources.arrange16.png");
+                radiatorTagsData.LargeImage = LoadIcon("GrdRevit.Resources.arrange32.png");
+                radiatorTagsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
-                panel.AddItem(arrangeTagsData);
+                panel.AddItem(radiatorTagsData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,
