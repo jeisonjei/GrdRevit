@@ -1,0 +1,132 @@
+<Window x:Class="GrdRevit.Ui.SystemTypesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JTOOLS: Типы систем"
+        Width="1000" Height="600"
+        MinWidth="840" MinHeight="440"
+        WindowStartupLocation="CenterOwner"
+        Closing="OnClosing">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource CardBgBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                CornerRadius="4" Padding="10,6" Margin="0,8,0,0">
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"
+                       Text="Правки в таблице не применяются мгновенно: изменённые ячейки подсвечиваются жёлтым, а в модель они попадают только по кнопке «Сохранить изменения». «Копировать» дублирует выбранный тип, «Создать легенду» рисует в активном виде вертикальный стек линий длиной 1000 мм (цвет и тип линий берутся из типов, толщина линий легенды — 4), «Экспорт в Excel» выгружает текущий набор (трубы или воздуховоды)."/>
+        </Border>
+
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Набор типов:" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <ComboBox x:Name="KindCombo" Width="170" Margin="6,0,0,0"
+                              SelectionChanged="OnKindChanged"
+                              ToolTip="«Трубы» — типы трубных систем (PipingSystemType), «Воздуховоды» — типы систем воздуховодов (MechanicalSystemType)">
+                        <ComboBoxItem Content="Трубы"/>
+                        <ComboBoxItem Content="Воздуховоды"/>
+                    </ComboBox>
+                    <Button Content="Экспорт в Excel" Click="OnExportExcel" Margin="18,0,0,0"
+                            Style="{StaticResource GhostButtonStyle}" Padding="12,5"
+                            ToolTip="Выгрузить текущий набор (трубы или воздуховоды) в книгу Excel: имя, сокращение, цвет, толщина линий, тип линий"/>
+                    <Button Content="Копировать" Click="OnDuplicateSelected" Margin="8,0,0,0"
+                            Style="{StaticResource GhostButtonStyle}" Padding="12,5"
+                            ToolTip="Дублировать выбранный тип системы: имя «Имя (копия)». Копия создаётся сразу"/>
+                    <Button Content="Создать легенду" Click="OnDrawLegend" Margin="8,0,0,0"
+                            Style="{StaticResource GhostButtonStyle}" Padding="12,5"
+                            ToolTip="В активном виде слева от указанной точки рисуется вертикальный стек линий по 1000 мм — цвет и тип линий из типа системы, подпись «Имя (Сокращение)» справа"/>
+                    <Button Content="Сохранить изменения" Click="OnSave" Margin="8,0,0,0"
+                            Style="{StaticResource PrimaryButtonStyle}" Padding="14,5" FontWeight="SemiBold"
+                            ToolTip="Применить к типам систем изменённые ячейки текущего набора"/>
+                    <TextBlock x:Name="CountText" VerticalAlignment="Center" Margin="18,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <TextBlock x:Name="StatusText" Margin="1,6,0,0" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+
+            <DataGrid x:Name="Grid" Margin="0,0,0,4"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      EnableRowVirtualization="True"
+                      ItemsSource="{Binding Rows, RelativeSource={RelativeSource AncestorType=Window}}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="Имя" Width="2*" MinWidth="180" SortMemberPath="Name">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Background="{Binding NameDirtyBrush}"
+                                         BorderThickness="0" Padding="4,0" Margin="2,2"
+                                         VerticalContentAlignment="Center"
+                                         ToolTip="Имя типа системы (видно в окне свойств типа и в настройках панели)"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Сокращение" Width="*" MinWidth="90" SortMemberPath="Abbreviation">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding Abbreviation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Background="{Binding AbbreviationDirtyBrush}"
+                                         BorderThickness="0" Padding="4,0" Margin="2,2"
+                                         VerticalContentAlignment="Center"
+                                         ToolTip="Сокращение типа системы (RBS_SYSTEM_ABBREVIATION_PARAM)"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Цвет" Width="*" MinWidth="130" SortMemberPath="ColorSortKey">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Click="OnPickColor" HorizontalContentAlignment="Stretch"
+                                        Background="{Binding ColorDirtyBrush}" BorderThickness="0"
+                                        Padding="4,2" Margin="2,2"
+                                        ToolTip="Цвет линий системы. Открывает редактор цвета с RGB и HEX">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="18" Height="14" BorderBrush="#8B93A5"
+                                                BorderThickness="1" Background="{Binding ColorBrush}"/>
+                                        <TextBlock Text="{Binding ColorHex}" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Толщина линий" Width="130" SortMemberPath="LineWeight">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ComboBox ItemsSource="{Binding Weights, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          SelectedItem="{Binding LineWeight, Mode=TwoWay}"
+                                          Background="{Binding LineWeightDirtyBrush}"
+                                          Margin="2,2" ToolTip="Толщина линий системы (1–16)"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Тип линий" Width="2*" MinWidth="170" SortMemberPath="PatternSortKey">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ComboBox ItemsSource="{Binding Patterns, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          SelectedValuePath="Key" DisplayMemberPath="Name"
+                                          SelectedValue="{Binding PatternKey, Mode=TwoWay}"
+                                          Background="{Binding PatternDirtyBrush}"
+                                          Margin="2,2" ToolTip="Паттерн (тип) линий системы из документа"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+    </DockPanel>
+</Window>

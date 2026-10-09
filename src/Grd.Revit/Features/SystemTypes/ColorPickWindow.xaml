@@ -1,0 +1,64 @@
+<Window x:Class="GrdRevit.Ui.ColorPickWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Цвет типа системы"
+        Width="420"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <StackPanel Margin="16">
+        <TextBlock Text="Цвет типа системы" FontWeight="SemiBold" FontSize="14"/>
+        <TextBlock Text="Подойдёт для линий систем и легенды." Margin="1,2,0,0"
+                   Foreground="{StaticResource TextSecondaryBrush}"/>
+
+        <Border x:Name="PreviewSwatch" Height="34" CornerRadius="4" Margin="0,12,0,0"
+                BorderBrush="#8B93A5" BorderThickness="1"/>
+
+        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+            <TextBlock Text="Красный (R)" Width="90" VerticalAlignment="Center"/>
+            <Slider x:Name="RSlider" Minimum="0" Maximum="255" ValueChanged="OnSliderChanged"
+                    Margin="8,0,0,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="RVal" Width="30" TextAlignment="Right" VerticalAlignment="Center"
+                       Margin="8,0,0,0"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+            <TextBlock Text="Зелёный (G)" Width="90" VerticalAlignment="Center"/>
+            <Slider x:Name="GSlider" Minimum="0" Maximum="255" ValueChanged="OnSliderChanged"
+                    Margin="8,0,0,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="GVal" Width="30" TextAlignment="Right" VerticalAlignment="Center"
+                       Margin="8,0,0,0"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+            <TextBlock Text="Синий (B)" Width="90" VerticalAlignment="Center"/>
+            <Slider x:Name="BSlider" Minimum="0" Maximum="255" ValueChanged="OnSliderChanged"
+                    Margin="8,0,0,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="BVal" Width="30" TextAlignment="Right" VerticalAlignment="Center"
+                       Margin="8,0,0,0"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+            <TextBlock Text="HEX:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <TextBox x:Name="HexBox" Width="130" Margin="8,0,0,0" Padding="6,4"
+                     TextChanged="OnHexChanged"/>
+            <Button Content="Копировать HEX" Click="OnCopyHex" Margin="8,0,0,0"
+                    Style="{StaticResource GhostButtonStyle}" Padding="10,4"/>
+        </StackPanel>
+        <TextBlock Text="Формат #RRGGBB — можно вставить цвет из буфера обмена."
+                   Margin="1,4,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Готово" Click="OnOk" Style="{StaticResource PrimaryButtonStyle}"
+                    Padding="20,6" FontWeight="SemiBold" IsDefault="True"/>
+            <Button Content="Отмена" Click="OnCancel" Margin="8,0,0,0" Padding="16,6" IsCancel="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

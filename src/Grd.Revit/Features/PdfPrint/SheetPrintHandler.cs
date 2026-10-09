@@ -75,17 +75,19 @@ namespace GrdRevit.Revit
         private bool _cancelRequested;
         private PrintJob _job;
 
-        private enum Kind { ReadSheets, PrintSheets }
+        private enum Kind { ReadSheets, PrintSheets, OpenSheet }
 
         private sealed class Request
         {
             public Kind Kind;
             public List<long> SheetIds;
+            public long SheetId;
             public string TargetPath;
             public bool Raster;
             public bool BlackWhite;
             public Action<SheetListResult> ListCallback;
             public Action<SheetPrintProgress> ProgressCallback;
+            public Action<string> OpenCallback;
         }
 
         private sealed class PrintJob
@@ -128,6 +130,14 @@ namespace GrdRevit.Revit
                     BlackWhite = blackWhite,
                     ProgressCallback = callback
                 });
+        }
+
+        /// <summary>Открыть лист в активном документе (для просмотра перед печатью).
+        /// Callback получает текст ошибки или null при успехе.</summary>
+        public void QueueOpenSheet(long sheetId, Action<string> callback)
+        {
+            lock (_sync)
+                _requests.Enqueue(new Request { Kind = Kind.OpenSheet, SheetId = sheetId, OpenCallback = callback });
         }
 
         /// <summary>Запрос отмены текущей печати: обработчик завершит шаг, удалит временные
@@ -175,6 +185,20 @@ namespace GrdRevit.Revit
                     }
                     try { req.ListCallback?.Invoke(list); }
                     catch (Exception ex) { GrdLog.Log("SheetPrintHandler.ReadSheets callback: " + ex); }
+                    return;
+                }
+
+                if (req.Kind == Kind.OpenSheet)
+                {
+                    string error = null;
+                    try { error = OpenSheet(app, req.SheetId); }
+                    catch (Exception ex)
+                    {
+                        GrdLog.Log("SheetPrintHandler.OpenSheet EXCEPTION: " + ex);
+                        error = "Ошибка открытия листа: " + ex.Message;
+                    }
+                    try { req.OpenCallback?.Invoke(error); }
+                    catch (Exception ex) { GrdLog.Log("SheetPrintHandler.OpenSheet callback: " + ex); }
                     return;
                 }
 
@@ -544,6 +568,25 @@ namespace GrdRevit.Revit
             res.Sheets = items;
             GrdLog.Log("SheetPrintHandler.ReadSheets: листов=" + items.Count);
             return res;
+        }
+
+        /// <summary>Открывает лист в активном документе (делает его активным видом).
+        /// Возвращает текст ошибки или null при успехе.</summary>
+        private static string OpenSheet(UIApplication app, long sheetId)
+        {
+            var uidoc = app?.ActiveUIDocument;
+            var sheet = uidoc?.Document.GetElement(new ElementId(sheetId)) as ViewSheet;
+            if (sheet == null) return "Лист не найден или документ неактивен.";
+            try
+            {
+                uidoc.RequestViewChange(sheet);
+            }
+            catch (Exception ex)
+            {
+                return "Не удалось открыть лист: " + ex.Message;
+            }
+            GrdLog.Log("SheetPrintHandler: открыт лист «" + sheet.SheetNumber + "»");
+            return null;
         }
 
         /// <summary>Ключ документа для хранения отметок листов: путь файла, а для

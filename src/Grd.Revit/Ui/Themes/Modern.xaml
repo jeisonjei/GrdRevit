@@ -163,7 +163,7 @@
                                     </Path.RenderTransform>
                                 </Path>
                                 <Thumb x:Name="PART_RightHeaderGripper" Width="8"
-                                       HorizontalAlignment="Right">
+                                       HorizontalAlignment="Right" Cursor="SizeWE">
                                     <Thumb.Template>
                                         <ControlTemplate TargetType="Thumb">
                                             <Border Background="Transparent"/>

@@ -27,6 +27,10 @@ namespace GrdRevit
         private const string DxfMapButtonName = "GrdRevit.DxfMap";
         private const string SuperRotateButtonName = "GrdRevit.SuperRotate";
         private const string RadiatorTagsButtonName = "GrdRevit.RadiatorTags";
+        private const string CopyRoomsButtonName = "GrdRevit.CopyRooms";
+        private const string TomatImportButtonName = "GrdRevit.TomatImport";
+        private const string SelectInsulationButtonName = "GrdRevit.SelectInsulation";
+        private const string SystemTypesButtonName = "GrdRevit.SystemTypes";
 
         public Result OnStartup(UIControlledApplication app)
         {
@@ -251,8 +255,8 @@ namespace GrdRevit
                                       "который вы кликните на виде Revit после выбора прибора на плане. " +
                                       "Кнопка «Настройки марок…» открывает сопоставление «марка DXF -> семейство/тип Revit»."
                 };
-                dxfMapData.Image = LoadIcon("GrdRevit.Resources.plugin16.png");
-                dxfMapData.LargeImage = LoadIcon("GrdRevit.Resources.plugin32.png");
+                dxfMapData.Image = LoadIcon("GrdRevit.Resources.dxfmap16.png");
+                dxfMapData.LargeImage = LoadIcon("GrdRevit.Resources.dxfmap32.png");
                 dxfMapData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(dxfMapData);
@@ -279,6 +283,87 @@ namespace GrdRevit
                 radiatorTagsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(radiatorTagsData);
+
+                var copyRoomsData = new PushButtonData(
+                    CopyRoomsButtonName,
+                    "Скопировать\nкомнаты",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdCopyRoomsCommand).FullName)
+                {
+                    ToolTip = "Создать пространства ОВ по помещениям выбранной связи АР: имя и номер переносятся как есть",
+                    LongDescription = "Находит помещения в связанном файле АР и создаёт для каждого пространство ОВ с " +
+                                      "такими же именем и номером в той же позиции на плане. " +
+                                      "Если связь одна — она используется автоматически; если связей несколько — " +
+                                      "кликните по нужной связи на виде. Уровень и фаза подбираются по имени " +
+                                      "(при расхождении — ближайший уровень по высоте и фаза по умолчанию). " +
+                                      "Итог — в окне результата и в логе."
+                };
+                copyRoomsData.Image = LoadIcon("GrdRevit.Resources.copyrooms16.png");
+                copyRoomsData.LargeImage = LoadIcon("GrdRevit.Resources.copyrooms32.png");
+                copyRoomsData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(copyRoomsData);
+
+                var tomatData = new PushButtonData(
+                    TomatImportButtonName,
+                    "Импорт .tomat",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdTomatImportCommand).FullName)
+                {
+                    ToolTip = "Записать приточные/вытяжные системы и расходы воздуха из файла .tomat в параметры пространств ОВ (без создания пространств)",
+                    LongDescription = "Открывает файл .tomat (программа расчёта теплопотерь/отопления) и сопоставляет " +
+                                      "его помещения с существующими пространствами активного документа по номеру и имени. " +
+                                      "В окне указываются четыре параметра пространства: приточная и вытяжная система (текст), " +
+                                      "расход приточного и вытяжного воздуха (число, м³/ч). " +
+                                      "Несопоставленные строки подсвечиваются — их можно сопоставить вручную в таблице. " +
+                                      "Имена параметров и путь к файлу запоминаются."
+                };
+                tomatData.Image = LoadIcon("GrdRevit.Resources.tomat16.png");
+                tomatData.LargeImage = LoadIcon("GrdRevit.Resources.tomat32.png");
+                tomatData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(tomatData);
+
+                var selectInsulationData = new PushButtonData(
+                    SelectInsulationButtonName,
+                    "Выбрать\nизоляцию",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdSelectInsulationCommand).FullName)
+                {
+                    ToolTip = "Режим выделения только изоляции труб и воздуховодов — щелчком или рамкой, без выбора трубы и «Редактировать изоляцию»",
+                    LongDescription = "Запустите команду и щёлкайте по трубам, воздуховодам и фитингам с изоляцией " +
+                                      "или выделяйте их рамкой (окно/секущая) — рамка захватывает только элементы, " +
+                                      "у которых изоляция есть. По «Готово»/Enter в активное выделение подставляется " +
+                                      "именно изоляция (сама труба не выделяется), после чего доступны «Редактировать " +
+                                      "изоляцию» и смена типа. Esc — отмена. Решает проблему Revit, где изоляцию " +
+                                      "можно выделить только через трубу и «Редактировать изоляцию»."
+                };
+                selectInsulationData.Image = LoadIcon("GrdRevit.Resources.insulation16.png");
+                selectInsulationData.LargeImage = LoadIcon("GrdRevit.Resources.insulation32.png");
+                selectInsulationData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(selectInsulationData);
+
+                var systemTypesData = new PushButtonData(
+                    SystemTypesButtonName,
+                    "Типы\nсистем",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdSystemTypesCommand).FullName)
+                {
+                    ToolTip = "Типы систем труб и воздуховодов: имя, сокращение, цвет, толщина и тип линий, легенда, экспорт в Excel",
+                    LongDescription = "Таблица типов систем активного документа (трубы или воздуховоды) с редактируемыми " +
+                                      "ячейками: имя, сокращение, цвет, толщина линий и тип линий. Правки подсвечиваются " +
+                                      "жёлтым и применяются к модели кнопкой «Сохранить изменения» (затем доступны и в " +
+                                      "штатном диалоге Revit). «Копировать» создаёт копию типа с именем «Имя (копия)». " +
+                                      "«Создать легенду» рисует в активном виде вертикальный стек линий длиной 1000 мм " +
+                                      "с цветом и типом линий из типа и подписью «Имя (Сокращение)» справа. «Экспорт в " +
+                                      "Excel» выгружает текущий набор в книгу .xlsx без внешних зависимостей."
+                };
+                systemTypesData.Image = LoadIcon("GrdRevit.Resources.systemtypes16.png");
+                systemTypesData.LargeImage = LoadIcon("GrdRevit.Resources.systemtypes32.png");
+                systemTypesData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(systemTypesData);
 
                 var settingsData = new PushButtonData(
                     SettingsButtonName,

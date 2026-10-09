@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using GrdRevit.Core;
 using GrdRevit.Revit;
 
@@ -147,9 +149,19 @@ namespace GrdRevit.Ui
 
         private void OnListPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
-            if (e.Key != System.Windows.Input.Key.Space) return;
+            if (e.Key == Key.Enter)
+            {
+                if (_printing) { e.Handled = true; return; }
+                if (SheetsList.SelectedItem is SheetInfo s)
+                {
+                    OpenSheet(s);
+                    e.Handled = true;
+                }
+                return;
+            }
+            if (e.Key != Key.Space) return;
             // Если фокус на самом флажке, пробел обрабатывается штатно.
-            if (System.Windows.Input.Keyboard.FocusedElement is CheckBox) return;
+            if (Keyboard.FocusedElement is CheckBox) return;
 
             var item = SheetsList.SelectedItem as SheetInfo;
             if (item == null) return;
@@ -157,6 +169,67 @@ namespace GrdRevit.Ui
             SheetsList.Items.Refresh();
             AfterCheckChanged();
             e.Handled = true;
+        }
+
+        private void OnSheetSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            OpenSheetBtn.IsEnabled = !_printing && SheetsList.SelectedItem is SheetInfo;
+        }
+
+        /// <summary>Двойной щелчок по строке открывает лист. Щелчки по флажку или звёздочке
+        /// обрабатываются сами собой — лист при этом не открывается.</summary>
+        private void OnListPreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (_printing) return;
+            if (IsOverInteractiveControl(e.OriginalSource)) return;
+            if (SheetsList.SelectedItem is SheetInfo s)
+            {
+                OpenSheet(s);
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>True, если оригинал события лежит внутри флажка или кнопки (звёздочка).</summary>
+        private static bool IsOverInteractiveControl(object originalSource)
+        {
+            if (!(originalSource is DependencyObject d)) return false;
+            while (d != null)
+            {
+                if (d is CheckBox || d is System.Windows.Controls.Primitives.ButtonBase) return true;
+                d = d is Visual || d is System.Windows.Media.Media3D.Visual3D
+                    ? VisualTreeHelper.GetParent(d)
+                    : LogicalTreeHelper.GetParent(d);
+            }
+            return false;
+        }
+
+        private void OnOpenSheet(object sender, RoutedEventArgs e)
+        {
+            if (_printing) return;
+            if (SheetsList.SelectedItem is SheetInfo s) OpenSheet(s);
+        }
+
+        private void OpenSheet(SheetInfo s)
+        {
+            var handler = RevitContext.SheetPrintHandler;
+            var ev = RevitContext.SheetPrintEvent;
+            if (handler == null || ev == null)
+            {
+                StatusText.Text = "Обработчик печати недоступен.";
+                return;
+            }
+            StatusText.Text = "Открытие: «" + s.Display + "»…";
+            handler.QueueOpenSheet(s.SheetId, error =>
+            {
+                try
+                {
+                    StatusText.Text = string.IsNullOrEmpty(error)
+                        ? "Открыт: " + s.Display + "."
+                        : error;
+                }
+                catch (Exception ex) { GrdLog.Log("SheetPdfPrintWindow.OpenSheet callback EXCEPTION: " + ex); }
+            });
+            ev.Raise();
         }
 
         private void UpdateCounts()
@@ -225,6 +298,7 @@ namespace GrdRevit.Ui
             SearchBox.IsEnabled = !busy;
             SelectAllBtn.IsEnabled = !busy;
             SelectNoneBtn.IsEnabled = !busy;
+            OpenSheetBtn.IsEnabled = !busy && SheetsList.SelectedItem is SheetInfo;
             OnlyCheckedCheck.IsEnabled = !busy;
             OnlyFavCheck.IsEnabled = !busy;
         }

@@ -103,6 +103,27 @@ namespace GrdRevit.Ui
         private string _docKey = string.Empty;
         private bool _busy;
 
+        /// <summary>Отложенное автообновление списка: склеивает серию изменений
+        /// документа в один запрос на чтение.</summary>
+        private System.Windows.Threading.DispatcherTimer _reloadDebounce;
+
+        private Style _cellStyleNoWrap;
+        private Style _cellStyleWrap;
+        private bool _editing;
+
+        /// <summary>Отложенное сохранение ширин колонок: во время перетаскивания
+        /// разделителя событие приходит часто, пишем настройки один раз.</summary>
+        private System.Windows.Threading.DispatcherTimer _columnSaveDebounce;
+
+        /// <summary>Наблюдение за Width колонок (DependencyPropertyDescriptor):
+        /// у WPF DataGrid нет события изменения ширины колонки.</summary>
+        private System.ComponentModel.DependencyPropertyDescriptor _widthDpd;
+        private readonly List<DataGridColumn> _widthWatched = new List<DataGridColumn>();
+
+        /// <summary>Пока true — идёт инициализация UI, не сохраняем настройки,
+        /// сработавшие от программной установки галочек.</summary>
+        private bool _loadingUi;
+
         public ObservableCollection<ViewsRow> Rows { get; } = new ObservableCollection<ViewsRow>();
 
         public ViewsManagerWindow()
@@ -110,6 +131,23 @@ namespace GrdRevit.Ui
             InitializeComponent();
             WindowTopmost.Track(this);
             DataContext = Rows;
+            // Тема задаёт фиксированную высоту строки (RowHeight=30). При переносе
+            // строк текст не помещается — снимаем фикс, чтобы строки росли по контенту.
+            ViewsGrid.RowHeight = double.NaN;
+            RestoreColumnWidths();
+            HookColumnWidths();
+            // Восстанавливаем состояние галочки «Перенос строк» из настроек.
+            _loadingUi = true;
+            try
+            {
+                ChkWrapText.IsChecked = RevitContext.Settings?.ViewWrapText == true;
+            }
+            finally { _loadingUi = false; }
+            ApplyCellStyles(ChkWrapText.IsChecked == true);
+            // Автообновление: виды, созданные/удалённые/переименованные в Revit уже
+            // после открытия окна, должны появляться в таблице без кнопки «Обновить».
+            RevitContext.DocumentChanged += OnRevitDocumentChanged;
+            Closed += OnWindowClosed;
             Loaded += (s, e) =>
             {
                 Dispatcher.BeginInvoke(new Action(() =>
@@ -118,6 +156,54 @@ namespace GrdRevit.Ui
                 }), System.Windows.Threading.DispatcherPriority.Input);
                 Reload();
             };
+        }
+
+        private void OnWindowClosed(object sender, EventArgs e)
+        {
+            RevitContext.DocumentChanged -= OnRevitDocumentChanged;
+            if (_reloadDebounce != null)
+            {
+                _reloadDebounce.Stop();
+                _reloadDebounce = null;
+            }
+            if (_columnSaveDebounce != null)
+            {
+                _columnSaveDebounce.Stop();
+                _columnSaveDebounce = null;
+            }
+            UnhookColumnWidths();
+            SaveColumnWidths();
+        }
+
+        /// <summary>Событие изменения документа приходит в потоке Revit —
+        /// переключаемся на UI-поток WPF и запускаем отложенное обновление.</summary>
+        private void OnRevitDocumentChanged()
+        {
+            try { Dispatcher.BeginInvoke(new Action(ScheduleAutoReload)); }
+            catch { }
+        }
+
+        private void ScheduleAutoReload()
+        {
+            if (!IsVisible) return;
+            // Не мешаем редактированию ячейки: перезаполнение сетки прервало бы ввод.
+            if (_editing) return;
+            if (_reloadDebounce == null)
+            {
+                _reloadDebounce = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(700)
+                };
+                _reloadDebounce.Tick += (s, e) =>
+                {
+                    _reloadDebounce.Stop();
+                    if (!IsVisible) return;
+                    if (_busy) { _reloadDebounce.Start(); return; }
+                    Reload();
+                };
+            }
+            _reloadDebounce.Stop();
+            _reloadDebounce.Start();
         }
 
         /// <summary>Ключ документа задаётся командой: избранное хранится по документу.</summary>
@@ -168,6 +254,160 @@ namespace GrdRevit.Ui
         {
             try { RevitContext.ViewsManagerEvent?.Raise(); }
             catch (Exception ex) { GrdLog.Log("ViewsManagerWindow.Raise EXCEPTION: " + ex); }
+        }
+
+        /// <summary>Галочка «Перенос строк»: переключает TextWrapping в текстовых
+        /// ячейках таблицы (длинные имена разворачиваются в несколько строк).</summary>
+        private void OnWrapTextChanged(object sender, RoutedEventArgs e)
+        {
+            if (ViewsGrid == null) return;
+            var wrap = ChkWrapText.IsChecked == true;
+            ApplyCellStyles(wrap);
+            if (_loadingUi) return;
+            try
+            {
+                var settings = RevitContext.Settings;
+                if (settings != null && settings.ViewWrapText != wrap)
+                {
+                    settings.ViewWrapText = wrap;
+                    RevitContext.SaveSettings();
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ViewsManagerWindow.OnWrapTextChanged save EXCEPTION: " + ex);
+            }
+        }
+
+        private void ApplyCellStyles(bool wrap)
+        {
+            if (_cellStyleNoWrap == null)
+            {
+                _cellStyleNoWrap = BuildCellStyle(TextWrapping.NoWrap);
+                _cellStyleWrap = BuildCellStyle(TextWrapping.Wrap);
+            }
+            var style = wrap ? _cellStyleWrap : _cellStyleNoWrap;
+            foreach (var col in ViewsGrid.Columns)
+            {
+                if (col is DataGridTextColumn textColumn)
+                    textColumn.ElementStyle = style;
+            }
+        }
+
+        private static Style BuildCellStyle(TextWrapping wrapping)
+        {
+            var style = new Style(typeof(TextBlock));
+            style.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+            style.Setters.Add(new Setter(TextBlock.MarginProperty, new Thickness(9, 4, 9, 4)));
+            style.Setters.Add(new Setter(TextBlock.TextWrappingProperty, wrapping));
+            return style;
+        }
+
+        // ---- Ширины колонок (сохраняются между запусками Revit) ----
+
+        /// <summary>Ключ колонки для хранения ширины — её заголовок.</summary>
+        private static string ColumnKey(DataGridColumn column)
+        {
+            return (column?.Header?.ToString() ?? string.Empty).Trim();
+        }
+
+        private void RestoreColumnWidths()
+        {
+            try
+            {
+                var map = RevitContext.Settings?.ViewColumnWidths;
+                if (map == null || map.Count == 0) return;
+                foreach (var col in ViewsGrid.Columns)
+                {
+                    var key = ColumnKey(col);
+                    if (key.Length == 0) continue;
+                    if (map.TryGetValue(key, out var width) && width > 0)
+                        col.Width = new DataGridLength(width);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ViewsManagerWindow.RestoreColumnWidths EXCEPTION: " + ex);
+            }
+        }
+
+        /// <summary>Слежение за изменением ширины колонок: у WPF DataGrid нет
+        /// события ColumnWidthChanged, поэтому подписываемся на DependencyProperty
+        /// Width каждой колонки через DependencyPropertyDescriptor.</summary>
+        private void HookColumnWidths()
+        {
+            try
+            {
+                _widthDpd = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(
+                    DataGridColumn.WidthProperty, typeof(DataGridColumn));
+                if (_widthDpd == null) return;
+                foreach (var col in ViewsGrid.Columns)
+                {
+                    _widthDpd.AddValueChanged(col, OnColumnWidthChanged);
+                    _widthWatched.Add(col);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ViewsManagerWindow.HookColumnWidths EXCEPTION: " + ex);
+            }
+        }
+
+        private void UnhookColumnWidths()
+        {
+            try
+            {
+                if (_widthDpd != null)
+                    foreach (var col in _widthWatched)
+                        _widthDpd.RemoveValueChanged(col, OnColumnWidthChanged);
+            }
+            catch { }
+            _widthWatched.Clear();
+        }
+
+        /// <summary>Ширина колонки изменена. Запоминаем только «ручную» (не звёздочную)
+        /// ширину: ActualWidth звёздочных меняется при изменении размера окна.</summary>
+        private void OnColumnWidthChanged(object sender, EventArgs e)
+        {
+            if (!(sender is DataGridColumn col) || col.Width.IsStar) return;
+            if (_columnSaveDebounce == null)
+            {
+                _columnSaveDebounce = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(600)
+                };
+                _columnSaveDebounce.Tick += (s, a) =>
+                {
+                    _columnSaveDebounce.Stop();
+                    SaveColumnWidths();
+                };
+            }
+            _columnSaveDebounce.Stop();
+            _columnSaveDebounce.Start();
+        }
+
+        private void SaveColumnWidths()
+        {
+            try
+            {
+                var settings = RevitContext.Settings;
+                if (settings == null) return;
+                if (settings.ViewColumnWidths == null)
+                    settings.ViewColumnWidths = new Dictionary<string, double>();
+                foreach (var col in ViewsGrid.Columns)
+                {
+                    if (col.Width.IsStar) continue;
+                    var key = ColumnKey(col);
+                    if (key.Length == 0) continue;
+                    var width = col.ActualWidth;
+                    if (width > 0) settings.ViewColumnWidths[key] = Math.Round(width, 1);
+                }
+                RevitContext.SaveSettings();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ViewsManagerWindow.SaveColumnWidths EXCEPTION: " + ex);
+            }
         }
 
         private void Reload()
@@ -533,6 +773,16 @@ namespace GrdRevit.Ui
             var header = ViewsGrid.CurrentCell.Column.Header?.ToString();
             if (header == "Имя вида" || header == "Номер листа")
                 ViewsGrid.BeginEdit();
+        }
+
+        private void OnCellBeginEdit(object sender, DataGridBeginningEditEventArgs e)
+        {
+            _editing = true;
+        }
+
+        private void OnRowEditEnding(object sender, DataGridRowEditEndingEventArgs e)
+        {
+            _editing = false;
         }
 
         private void OnCellEditEnding(object sender, DataGridCellEditEndingEventArgs e)

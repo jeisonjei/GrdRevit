@@ -111,6 +111,10 @@
                               VerticalAlignment="Center" Margin="18,0,0,0"
                               Checked="OnFavOnlyChanged" Unchecked="OnFavOnlyChanged"
                               ToolTip="Показывать только виды, отмеченные звёздочкой ★"/>
+                    <CheckBox x:Name="ChkWrapText" Content="Перенос строк"
+                              VerticalAlignment="Center" Margin="18,0,0,0"
+                              Checked="OnWrapTextChanged" Unchecked="OnWrapTextChanged"
+                              ToolTip="Переносить длинные имена и номера в несколько строк в ячейках таблицы"/>
                 </StackPanel>
                 <TextBlock Margin="2,4,2,0" TextWrapping="Wrap" FontSize="12"
                            Foreground="{StaticResource TextSecondaryBrush}"
@@ -123,9 +127,11 @@
                       CanUserAddRows="False" CanUserDeleteRows="False"
                       HeadersVisibility="Column"
                       SelectionMode="Single"
-                      CellEditEnding="OnCellEditEnding"
-                      PreviewKeyDown="OnGridKeyDown"
-                      MouseDoubleClick="OnGridDoubleClick">
+                       CellEditEnding="OnCellEditEnding"
+                       BeginningEdit="OnCellBeginEdit"
+                       RowEditEnding="OnRowEditEnding"
+                       PreviewKeyDown="OnGridKeyDown"
+                       MouseDoubleClick="OnGridDoubleClick">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="★" Width="40" IsReadOnly="True" CanUserSort="False">
                         <DataGridTemplateColumn.CellTemplate>
@@ -155,11 +161,11 @@
                     <DataGridCheckBoxColumn Header="✓" Width="32" IsReadOnly="False"
                                             Binding="{Binding Marked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                             CanUserSort="False"/>
-                    <DataGridTextColumn x:Name="NameCol" Header="Имя вида" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="2*">
+                    <DataGridTextColumn x:Name="NameCol" Header="Имя вида" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Width="3*">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                <Setter Property="Margin" Value="6,0"/>
+                                <Setter Property="Margin" Value="9,4"/>
                             </Style>
                         </DataGridTextColumn.ElementStyle>
                         <DataGridTextColumn.EditingElementStyle>
@@ -174,7 +180,7 @@
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                <Setter Property="Margin" Value="6,0"/>
+                                <Setter Property="Margin" Value="9,4"/>
                             </Style>
                         </DataGridTextColumn.ElementStyle>
                         <DataGridTextColumn.EditingElementStyle>
@@ -187,7 +193,7 @@
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                <Setter Property="Margin" Value="6,0"/>
+                                <Setter Property="Margin" Value="9,4"/>
                             </Style>
                         </DataGridTextColumn.ElementStyle>
                     </DataGridTextColumn>
@@ -195,7 +201,7 @@
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                <Setter Property="Margin" Value="6,0"/>
+                                <Setter Property="Margin" Value="9,4"/>
                             </Style>
                         </DataGridTextColumn.ElementStyle>
                     </DataGridTextColumn>

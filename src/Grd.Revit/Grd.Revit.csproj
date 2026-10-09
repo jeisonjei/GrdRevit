@@ -56,8 +56,18 @@
     <EmbeddedResource Include="Resources\schedule32.png" />
 <EmbeddedResource Include="Resources\copyparams16.png" />
     <EmbeddedResource Include="Resources\copyparams32.png" />
-    <EmbeddedResource Include="Resources\schedulesnap16.png" />
+<EmbeddedResource Include="Resources\schedulesnap16.png" />
     <EmbeddedResource Include="Resources\schedulesnap32.png" />
+    <EmbeddedResource Include="Resources\dxfmap16.png" />
+    <EmbeddedResource Include="Resources\dxfmap32.png" />
+    <EmbeddedResource Include="Resources\copyrooms16.png" />
+    <EmbeddedResource Include="Resources\copyrooms32.png" />
+    <EmbeddedResource Include="Resources\tomat16.png" />
+    <EmbeddedResource Include="Resources\tomat32.png" />
+    <EmbeddedResource Include="Resources\insulation16.png" />
+    <EmbeddedResource Include="Resources\insulation32.png" />
+    <EmbeddedResource Include="Resources\systemtypes16.png" />
+    <EmbeddedResource Include="Resources\systemtypes32.png" />
   </ItemGroup>
 
   <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->

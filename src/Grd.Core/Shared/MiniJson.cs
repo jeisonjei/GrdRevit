@@ -50,6 +50,16 @@ namespace GrdRevit.Core
             WriteProp(sb, "ScheduleExportDir", Quote(Encode(s.ScheduleExportDir)));
             sb.Append(',');
             WriteProp(sb, "ScheduleExportName", Quote(Encode(s.ScheduleExportName)));
+            sb.Append(',');
+            WriteProp(sb, "TomatSupplySystemParam", Quote(Encode(s.TomatSupplySystemParam)));
+            sb.Append(',');
+            WriteProp(sb, "TomatExhaustSystemParam", Quote(Encode(s.TomatExhaustSystemParam)));
+            sb.Append(',');
+            WriteProp(sb, "TomatSupplyAirflowParam", Quote(Encode(s.TomatSupplyAirflowParam)));
+            sb.Append(',');
+            WriteProp(sb, "TomatExhaustAirflowParam", Quote(Encode(s.TomatExhaustAirflowParam)));
+            sb.Append(',');
+            WriteProp(sb, "LastTomatPath", Quote(Encode(s.LastTomatPath)));
             sb.Append('}');
             return sb.ToString();
         }
@@ -222,6 +232,11 @@ namespace GrdRevit.Core
             }
             if (m.TryGetValue("ScheduleExportDir", out var sed)) s.ScheduleExportDir = sed as string ?? string.Empty;
             if (m.TryGetValue("ScheduleExportName", out var sen)) s.ScheduleExportName = sen as string ?? string.Empty;
+            if (m.TryGetValue("TomatSupplySystemParam", out var tss)) s.TomatSupplySystemParam = tss as string ?? s.TomatSupplySystemParam;
+            if (m.TryGetValue("TomatExhaustSystemParam", out var tes)) s.TomatExhaustSystemParam = tes as string ?? s.TomatExhaustSystemParam;
+            if (m.TryGetValue("TomatSupplyAirflowParam", out var tsa)) s.TomatSupplyAirflowParam = tsa as string ?? s.TomatSupplyAirflowParam;
+            if (m.TryGetValue("TomatExhaustAirflowParam", out var tea)) s.TomatExhaustAirflowParam = tea as string ?? s.TomatExhaustAirflowParam;
+            if (m.TryGetValue("LastTomatPath", out var tp)) s.LastTomatPath = tp as string ?? string.Empty;
             return s;
         }
 

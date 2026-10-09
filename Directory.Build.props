@@ -7,7 +7,7 @@
     чтобы в логах и UI было видно точную сборку.
   -->
   <PropertyGroup>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(SourceRevisionId)' != ''">

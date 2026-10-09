@@ -28,6 +28,13 @@ namespace GrdRevit.Revit
         /// <summary>Откуда взяты семейства в режиме «только выбранные»: название спецификации
         /// (если считали из неё) либо пусто (обычное выделение элементов).</summary>
         public string Scope = "";
+        /// <summary>Id элементов, попавших в область «только выбранные» (экземпляры семейств,
+        /// виды и листы). Нужны для создания ведомости по выбранным элементам.</summary>
+        public List<long> SelectedElementIds = new List<long>();
+        /// <summary>В область «только выбранные» попали виды (ведомость видов либо выделение).</summary>
+        public bool HasSelectedViews;
+        /// <summary>В область «только выбранные» попали листы (ведомость листов либо выделение).</summary>
+        public bool HasSelectedSheets;
     }
 
     /// <summary>Параметр выбранного семейства (для правой панели окна).</summary>
@@ -57,6 +64,18 @@ namespace GrdRevit.Revit
     /// </summary>
     public class FamilyInfoHandler : IExternalEventHandler
     {
+        /// <summary>Постоянная псевдозапись левого списка окна «Параметры семейств»: виды.</summary>
+        public const string PseudoViewsName = "✦ Виды";
+        /// <summary>Постоянная псевдозапись левого списка окна «Параметры семейств»: листы.</summary>
+        public const string PseudoSheetsName = "✦ Листы";
+
+        /// <summary>True, если имя — псевдозапись «виды»/«листы» (не семейство).</summary>
+        public static bool IsPseudoName(string name)
+        {
+            return string.Equals(name, PseudoViewsName, StringComparison.Ordinal)
+                || string.Equals(name, PseudoSheetsName, StringComparison.Ordinal);
+        }
+
         private readonly object _sync = new object();
         private readonly Queue<Request> _requests = new Queue<Request>();
 
@@ -146,10 +165,16 @@ namespace GrdRevit.Revit
                 }
                 if (selectedOnly)
                 {
-                    var selected = ActiveScopeFamilyNames(uiDoc, docNames, out var scopeName);
-                    res.Scope = scopeName ?? string.Empty;
-                    res.Families = selected.Select(n => new FamilyInfoItem { Name = n }).ToList();
-                    GrdLog.Log("FamilyInfoHandler: из выделения/спецификации семейств=" + res.Families.Count);
+                    var scope = CollectScope(uiDoc, docNames);
+                    res.Scope = scope.ScheduleName ?? string.Empty;
+                    res.Families = scope.FamilyNames.Select(n => new FamilyInfoItem { Name = n }).ToList();
+                    res.SelectedElementIds = scope.ElementIds;
+                    res.HasSelectedViews = scope.HasViews;
+                    res.HasSelectedSheets = scope.HasSheets;
+                    GrdLog.Log("FamilyInfoHandler: из выделения/спецификации семейств=" + res.Families.Count +
+                               ", элементов=" + res.SelectedElementIds.Count +
+                               ", видов=" + (scope.HasViews ? "да" : "нет") +
+                               ", листов=" + (scope.HasSheets ? "да" : "нет"));
                 }
                 else
                 {
@@ -230,6 +255,14 @@ namespace GrdRevit.Revit
 
             foreach (var name in names)
             {
+                // Псевдозаписи «Виды»/«Листы»: параметры читаются с представительного
+                // вида/листа (семейства как такового у них нет).
+                if (IsPseudoName(name))
+                {
+                    perFamily[name] = ReadPseudoParams(doc, name, messages);
+                    continue;
+                }
+
                 var fam = FindFamily(doc, name);
                 if (fam == null)
                 {
@@ -623,6 +656,99 @@ namespace GrdRevit.Revit
             return null;
         }
 
+        /// <summary>Параметры псевдозаписи «Виды»/«Листы»: с представительного вида/листа.</summary>
+        private static List<FamilyParamInfo> ReadPseudoParams(Document doc, string name, List<string> messages)
+        {
+            var isViews = string.Equals(name, PseudoViewsName, StringComparison.Ordinal);
+            var el = isViews
+                ? (Element)FindRepresentativeView(doc)
+                : (Element)FindRepresentativeSheet(doc);
+            if (el == null)
+            {
+                messages.Add("В документе нет " + (isViews ? "видов" : "листов") + " — параметры недоступны");
+                return new List<FamilyParamInfo>();
+            }
+            return ReadElementParams(el);
+        }
+
+        /// <summary>Представительный (первый нешаблонный) вид документа для чтения параметров.</summary>
+        private static View FindRepresentativeView(Document doc)
+        {
+            try
+            {
+                foreach (View v in new FilteredElementCollector(doc).OfClass(typeof(View)))
+                {
+                    if (v == null || v is ViewSchedule || v is View3D) continue;
+                    try { if (v.IsTemplate) continue; } catch { }
+                    return v;
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler.FindRepresentativeView EXCEPTION: " + ex);
+            }
+            return null;
+        }
+
+        /// <summary>Представительный (первый) лист документа для чтения параметров.</summary>
+        private static ViewSheet FindRepresentativeSheet(Document doc)
+        {
+            try
+            {
+                foreach (ViewSheet s in new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)))
+                    return s;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler.FindRepresentativeSheet EXCEPTION: " + ex);
+            }
+            return null;
+        }
+
+        /// <summary>Все параметры элемента (для видов/листов).</summary>
+        private static List<FamilyParamInfo> ReadElementParams(Element el)
+        {
+            var list = new List<FamilyParamInfo>();
+            if (el?.Parameters == null) return list;
+            try
+            {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (Parameter p in el.Parameters)
+                {
+                    if (p?.Definition == null || string.IsNullOrEmpty(p.Definition.Name)) continue;
+                    if (!seen.Add(p.Definition.Name)) continue;
+                    var guid = string.Empty;
+                    var isShared = false;
+                    try
+                    {
+                        isShared = p.IsShared;
+                        if (isShared)
+                        {
+                            var g = p.GUID;
+                            if (g != Guid.Empty) guid = g.ToString();
+                        }
+                    }
+                    catch { }
+                    list.Add(new FamilyParamInfo
+                    {
+                        Name = p.Definition.Name,
+                        IsShared = isShared,
+                        IsInstance = true,
+                        StorageType = DescribeType(p.Definition),
+                        Group = GroupName(p.Definition),
+                        Guid = guid,
+                        IsInFamily = true,
+                        HasFormula = false
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler.ReadElementParams EXCEPTION: " + ex);
+            }
+            return list;
+        }
+
         private static Family FindFamily(Document doc, string name)
         {
             foreach (Element e in new FilteredElementCollector(doc).OfClass(typeof(Family)))
@@ -633,35 +759,107 @@ namespace GrdRevit.Revit
             return null;
         }
 
-        /// <summary>
-        /// Определяет семейства для режима «только выбранные»:
-        /// если активный вид — спецификация (перечень) элементов, берутся семейства её
-        /// категорий с размещёнными в проекте экземплярами (название спецификации
-        /// возвращается в <paramref name="scheduleName"/>); иначе — семейства выделенных
-        /// в Revit элементов (экземпляров или самих семейств из обозревателя проекта).
-        /// Результат ограничен семействами, которые есть в документе.
-        /// </summary>
-        private static List<string> ActiveScopeFamilyNames(UIDocument uiDoc, ISet<string> docNames, out string scheduleName)
+        /// <summary>Область «только выбранные»: семейства (по именам), id элементов
+        /// (экземпляры семейств, виды, листы) и флаги наличия видов/листов.</summary>
+        private sealed class ScopeInfo
         {
-            var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            scheduleName = string.Empty;
-            if (uiDoc == null) return result.ToList();
+            public string ScheduleName = string.Empty;
+            public List<string> FamilyNames = new List<string>();
+            public List<long> ElementIds = new List<long>();
+            public bool HasViews;
+            public bool HasSheets;
+        }
+
+        /// <summary>
+        /// Определяет область «только выбранные»: если активный вид — спецификация
+        /// (перечень элементов либо ведомость видов/листов), берутся её экземпляры
+        /// (ид возвращаются целиком); иначе — выделенные в Revit элементы (экземпляры,
+        /// семейства — расширяются до их экземпляров, символы — до экземпляров типа,
+        /// виды и листы — как есть). Название спецификации возвращается в
+        /// <see cref="ScopeInfo.ScheduleName"/>. Семейства результатов ограничены
+        /// присутствующими в документе (<paramref name="docNames"/>).
+        /// </summary>
+        private static ScopeInfo CollectScope(UIDocument uiDoc, ISet<string> docNames)
+        {
+            var scope = new ScopeInfo();
+            if (uiDoc == null) return scope;
+
+            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var ids = new HashSet<long>();
+
+            void AddElement(Document doc, Element el)
+            {
+                if (el == null) return;
+                try
+                {
+                    if (el is FamilyInstance fi)
+                    {
+                        var famName = fi.Symbol?.Family?.Name;
+                        if (!string.IsNullOrEmpty(famName))
+                        {
+                            if (docNames.Contains(famName)) names.Add(famName);
+                            ids.Add(el.Id.Value);
+                        }
+                        return;
+                    }
+                    if (el is Family fam)
+                    {
+                        if (!string.IsNullOrEmpty(fam.Name) && docNames.Contains(fam.Name)) names.Add(fam.Name);
+                        foreach (var instId in FamilyInstanceIds(doc, fam)) ids.Add(instId);
+                        return;
+                    }
+                    if (el is FamilySymbol sym)
+                    {
+                        if (sym.Family != null && !string.IsNullOrEmpty(sym.Family.Name) &&
+                            docNames.Contains(sym.Family.Name)) names.Add(sym.Family.Name);
+                        foreach (var instId in FamilyInstanceIds(doc, sym.Id)) ids.Add(instId);
+                        return;
+                    }
+                    if (el is View)
+                    {
+                        ids.Add(el.Id.Value);
+                        scope.HasViews = true;
+                        return;
+                    }
+                    if (el is ViewSheet)
+                    {
+                        ids.Add(el.Id.Value);
+                        scope.HasSheets = true;
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("FamilyInfoHandler.CollectScope.AddElement EXCEPTION: " + ex);
+                }
+            }
 
             try
             {
+                var doc = uiDoc.Document;
                 if (uiDoc.ActiveView is ViewSchedule schedule)
                 {
                     var sd = schedule.Definition as ScheduleDefinition;
-                    // Работаем только с ведомостями элементов: ключевые спецификации
-                    // и спецификации материалов в этом сценарии не нужны.
+                    // Работаем с ведомостями элементов, а также со списками видов и листов.
                     if (sd != null && !sd.IsKeySchedule && !sd.IsMaterialTakeoff)
                     {
-                        var scheduled = ScheduleFamilyNames(uiDoc.Document, schedule);
-                        if (scheduled.Count > 0)
+                        schedule.RefreshData();
+                        var instances = schedule.GetScheduleInstances(-1);
+                        if (instances != null && instances.Count > 0)
                         {
-                            scheduleName = schedule.Name;
-                            GrdLog.Log("FamilyInfoHandler: спецификация «" + schedule.Name + "», семейств=" + scheduled.Count);
-                            return scheduled;
+                            scope.ScheduleName = schedule.Name;
+                            foreach (var id in instances)
+                            {
+                                Element el = null;
+                                try { el = doc.GetElement(id); } catch { }
+                                if (el == null) continue;
+                                AddElement(doc, el);
+                            }
+                            GrdLog.Log("FamilyInfoHandler: спецификация «" + schedule.Name + "», семейств=" +
+                                       names.Count + ", элементов=" + ids.Count);
+                            scope.FamilyNames = names.ToList();
+                            scope.ElementIds = ids.ToList();
+                            return scope;
                         }
                     }
                 }
@@ -676,52 +874,52 @@ namespace GrdRevit.Revit
                 foreach (var id in uiDoc.Selection.GetElementIds())
                 {
                     var el = uiDoc.Document.GetElement(id);
-                    if (el == null) continue;
-                    string name = null;
-                    if (el is FamilyInstance fi) name = fi.Symbol?.Family?.Name;
-                    else if (el is Family fam) name = fam.Name;
-                    if (string.IsNullOrEmpty(name)) continue;
-                    if (docNames.Contains(name)) result.Add(name);
+                    AddElement(uiDoc.Document, el);
                 }
             }
             catch (Exception ex)
             {
                 GrdLog.Log("FamilyInfoHandler: выделение EXCEPTION: " + ex);
             }
-            return result.ToList();
+
+            scope.FamilyNames = names.ToList();
+            scope.ElementIds = ids.ToList();
+            return scope;
         }
 
-        /// <summary>
-        /// Имена семейств элементов, реально отображаемых в спецификации (с учётом
-        /// применённых к ней фильтров, сортировки и группировки). Согласно документации
-        /// API, <see cref="ViewSchedule.GetScheduleInstances"/> с индексом сегмента -1
-        /// возвращает id всех экземпляров всей спецификации.
-        /// </summary>
-        private static List<string> ScheduleFamilyNames(Document doc, ViewSchedule schedule)
+        /// <summary>Id всех экземпляров семейства <paramref name="fam"/> в документе.</summary>
+        private static IEnumerable<long> FamilyInstanceIds(Document doc, Family fam)
         {
-            var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                schedule.RefreshData();
-                var ids = schedule.GetScheduleInstances(-1);
-                if (ids == null || ids.Count == 0) return result.ToList();
-                foreach (var id in ids)
-                {
-                    Element el = null;
-                    try { el = doc.GetElement(id); } catch { }
-                    if (el == null) continue;
-                    string name = null;
-                    if (el is FamilyInstance fi) name = fi.Symbol?.Family?.Name;
-                    else if (el is Family fam) name = fam.Name;
-                    if (string.IsNullOrEmpty(name)) continue;
-                    result.Add(name);
-                }
+                var symIds = new HashSet<ElementId>(fam.GetFamilySymbolIds());
+                return new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance))
+                    .Cast<FamilyInstance>()
+                    .Where(fi => fi?.Symbol != null && symIds.Contains(fi.Symbol.Id))
+                    .Select(fi => fi.Id.Value);
             }
             catch (Exception ex)
             {
-                GrdLog.Log("FamilyInfoHandler: GetScheduleInstances EXCEPTION: " + ex);
+                GrdLog.Log("FamilyInfoHandler.FamilyInstanceIds(fam) EXCEPTION: " + ex);
+                return Enumerable.Empty<long>();
             }
-            return result.ToList();
+        }
+
+        /// <summary>Id всех экземпляров указанного символа (типа) семейства в документе.</summary>
+        private static IEnumerable<long> FamilyInstanceIds(Document doc, ElementId symbolId)
+        {
+            try
+            {
+                return new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance))
+                    .Cast<FamilyInstance>()
+                    .Where(fi => fi?.Symbol != null && fi.Symbol.Id == symbolId)
+                    .Select(fi => fi.Id.Value);
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyInfoHandler.FamilyInstanceIds(symbol) EXCEPTION: " + ex);
+                return Enumerable.Empty<long>();
+            }
         }
 
         /// <summary>Человекопонятное имя группы параметра по ForgeTypeId.</summary>

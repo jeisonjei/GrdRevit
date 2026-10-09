@@ -846,105 +846,12 @@ private static void CreateProblemSchedule(UIApplication app, Document doc, Probl
 }
 
 /// <summary>Гарантирует наличие общего параметра-метки и его привязки к
-/// <paramref name="catSet"/>. Возвращает определение параметра (null при неудаче).
-/// Если параметр уже создан ранее и привязка покрывает нужные категории —
-/// переиспользуется, иначе создаётся новое определение «по внутренней логике плагина».</summary>
+/// <paramref name="catSet"/>. Поручено общему классу <see cref="SharedMarkerParam"/>.</summary>
 private static ExternalDefinition EnsureMarkerDefinition(UIApplication app, Document doc, CategorySet catSet)
 {
-    try
-    {
-        const string groupName = "JTOOLS";
-        const string baseName = "JTOOLS: перезагрузка — пропущено";
-
-        var file = OpenOrCreateSharedFile(app);
-        if (file == null) return null;
-
-        var group = file.Groups.get_Item(groupName) ?? file.Groups.Create(groupName);
-
-        var existing = group.Definitions.get_Item(baseName) as ExternalDefinition;
-        if (existing != null)
-        {
-            var binding = doc.ParameterBindings.get_Item(existing) as InstanceBinding;
-            if (binding != null)
-            {
-                if (CategoriesCovered(binding, catSet)) return existing;
-                // Определение уже привязано, но не ко всем нужным категориям —
-                // ниже создаём дополнительное определение со своим именем.
-            }
-            else
-            {
-                // Определение есть, но не привязано в проекте — привязываем.
-                doc.ParameterBindings.Insert(existing, new InstanceBinding(catSet));
-                return existing;
-            }
-        }
-
-        // Создаём определение (число-метку), с гарантией уникальности имени.
-        string name = baseName;
-        int n = 2;
-        while (group.Definitions.get_Item(name) != null) name = baseName + " (" + (n++) + ")";
-        var def = group.Definitions.Create(new ExternalDefinitionCreationOptions(name, SpecTypeId.Number)
-        {
-            Description = "JTOOLS: семейства, пропущенные при пакетной перезагрузке параметров"
-        }) as ExternalDefinition;
-        if (def == null) return null;
-
-        doc.ParameterBindings.Insert(def, new InstanceBinding(catSet));
-        return def;
-    }
-    catch (Exception ex)
-    {
-        GrdLog.Log("EnsureMarkerDefinition EXCEPTION: " + ex);
-        return null;
-    }
-}
-
-/// <summary>True, если привязка <paramref name="binding"/> покрывает все категории
-/// из <paramref name="needed"/>.</summary>
-private static bool CategoriesCovered(InstanceBinding binding, CategorySet needed)
-{
-    try
-    {
-        if (binding == null || needed == null) return false;
-        foreach (Category c in needed)
-        {
-            bool found = false;
-            foreach (Category bc in binding.Categories)
-            {
-                if (bc.Id == c.Id) { found = true; break; }
-            }
-            if (!found) return false;
-        }
-        return true;
-    }
-    catch { return false; }
-}
-
-/// <summary>Возвращает файл общих параметров для параметра-метки: использует файл
-/// текущего сеанса (Settings.LastSharedParamsPath), при отсутствии — создаёт свой
-/// во временной папке.</summary>
-private static DefinitionFile OpenOrCreateSharedFile(UIApplication app)
-{
-    try
-    {
-        string path = app.Application.SharedParametersFilename;
-        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
-            path = RevitContext.Settings.LastSharedParamsPath;
-        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
-        {
-            path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                "JTOOLS_SharedParams_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".txt");
-            try { System.IO.File.WriteAllBytes(path, System.Text.Encoding.UTF8.GetPreamble()); }
-            catch { return null; }
-        }
-        app.Application.SharedParametersFilename = path;
-        return app.Application.OpenSharedParameterFile();
-    }
-    catch (Exception ex)
-    {
-        GrdLog.Log("OpenOrCreateSharedFile EXCEPTION: " + ex);
-        return null;
-    }
+    return SharedMarkerParam.EnsureMarkerDefinition(app, doc, catSet,
+        "JTOOLS: перезагрузка — пропущено", "JTOOLS",
+        "JTOOLS: семейства, пропущенные при пакетной перезагрузке параметров");
 }
 
 /// <summary>

@@ -15,7 +15,7 @@
 
     <DockPanel Margin="10">
         <GroupBox DockPanel.Dock="Top" Margin="0,0,0,6" Padding="6">
-            <TextBlock Text="Отметьте листы и нажмите «Печать в PDF» — все выбранные листы сохраняются в один PDF-файл. Размер страницы подбирается автоматически по каждому листу. Векторный вывод компактнее; если знак «Ø» искажается, включите растровый вывод. Звёздочка ★ отмечает избранные листы — они учитываются и в окне «Экспорт в DWG» и запоминаются по документу."
+            <TextBlock Text="Отметьте листы и нажмите «Печать в PDF» — все выбранные листы сохраняются в один PDF-файл. Размер страницы подбирается автоматически по каждому листу. Векторный вывод компактнее; если знак «Ø» искажается, включите растровый вывод. Звёздочка ★ отмечает избранные листы — они учитываются и в окне «Экспорт в DWG» и запоминаются по документу. Перед печатью лист можно открыть для просмотра: кликните «Открыть лист», нажмите Enter или дважды щёлкните по строке."
                        TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"/>
         </GroupBox>
 
@@ -54,6 +54,9 @@
                     <StackPanel Orientation="Horizontal" Margin="2,5,0,0">
                         <Button x:Name="SelectAllBtn" Content="Выбрать все" Click="OnSelectAll" Padding="8,2"/>
                         <Button x:Name="SelectNoneBtn" Content="Снять все" Click="OnSelectNone" Margin="6,0,0,0" Padding="8,2"/>
+                        <Button x:Name="OpenSheetBtn" Content="Открыть лист" Click="OnOpenSheet" Margin="6,0,0,0" Padding="10,2"
+                                IsEnabled="False"
+                                ToolTip="Открыть выделенный лист в Revit для просмотра перед печатью (также Enter или двойной щелчок по строке)."/>
                         <CheckBox x:Name="OnlyCheckedCheck" Content="Только выбранные" Margin="14,0,0,0"
                                   VerticalAlignment="Center" Checked="OnOnlyCheckedChanged" Unchecked="OnOnlyCheckedChanged"
                                   ToolTip="Показывать в списке только отмеченные листы."/>
@@ -69,7 +72,9 @@
                 <ListBox x:Name="SheetsList" HorizontalContentAlignment="Stretch"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          PreviewKeyDown="OnListPreviewKeyDown"
-                         ToolTip="Пробел — отметить/снять лист, на котором стоит выделение.">
+                         PreviewMouseDoubleClick="OnListPreviewMouseDoubleClick"
+                         SelectionChanged="OnSheetSelectionChanged"
+                         ToolTip="Пробел — отметить/снять лист; Enter или двойной щелчок — открыть лист для просмотра.">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="2,1">

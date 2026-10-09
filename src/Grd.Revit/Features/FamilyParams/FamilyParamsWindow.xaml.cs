@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -89,8 +89,10 @@ namespace GrdRevit.Ui
     }
 
     /// <summary>Строка параметра выбранного семейства в правой панели окна.</summary>
-    public class FamilyParamRow
+    public class FamilyParamRow : ObservableObject
     {
+        private bool _isScheduled;
+
         public string Name { get; set; } = string.Empty;
         public bool IsShared { get; set; }
         public string SourceText => IsShared ? "общий" : "семейный";
@@ -106,6 +108,18 @@ namespace GrdRevit.Ui
         /// <summary>Доступен ли «Перенести в семейство»: только для общих параметров,
         /// которых ещё нет в семействе.</summary>
         public bool Movable => IsShared && !IsInFamily;
+        /// <summary>Отмечен ли параметр для ведомости («Создать ведомость» в режиме
+        /// «Только выбранные»): такие параметры попадут в поля создаваемой ведомости.</summary>
+        public bool IsScheduled
+        {
+            get => _isScheduled;
+            set => Set(ref _isScheduled, value);
+        }
+
+        /// <summary>Нативный параметр «Тип» Revit. В FamilyManager его нет, поэтому
+        /// строка добавляется плагином; он всегда идёт в ведомость первой колонкой
+        /// и служит ключом сортировки.</summary>
+        public bool IsNativeType { get; set; }
     }
 
     /// <summary>
@@ -126,6 +140,13 @@ namespace GrdRevit.Ui
         private bool _busy;
         private bool _applying;
         private bool _selectedMode;
+        private bool _scheduleBusy;
+        /// <summary>Имена параметров, отмеченных «В ведомость» (переживают перезагрузку правой панели).</summary>
+        private readonly HashSet<string> _scheduledNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Id элементов области «только выбранные» (последнее обновление списка семейств).</summary>
+        private List<long> _scopeIds = new List<long>();
+        private bool _scopeHasViews;
+        private bool _scopeHasSheets;
         private readonly DispatcherTimer _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
 
         public FamilyParamsWindow()
@@ -138,7 +159,45 @@ namespace GrdRevit.Ui
                 _debounce.Stop();
                 RefreshSelection();
             };
-            Loaded += (s, e) => RefreshInfo();
+            // Пункт 3: если в Revit есть выделение (или активный вид — спецификация),
+            // галочка «Только выбранные» включается по умолчанию.
+            Loaded += OnLoadedProbe;
+        }
+
+        /// <summary>При открытии: «зондируем» область «выбранные»; если она не пуста —
+        /// включаем режим «Только выбранные» по умолчанию (иначе обычный список всех семейств).</summary>
+        private void OnLoadedProbe(object sender, RoutedEventArgs e)
+        {
+            var ev = RevitContext.FamilyInfoEvent;
+            var h = RevitContext.FamilyInfoHandler;
+            if (ev == null || h == null)
+            {
+                RefreshInfo();
+                return;
+            }
+            try
+            {
+                h.Queue(null, RevitContext.Settings.LastSharedParamsPath, res =>
+                {
+                    try
+                    {
+                        bool any = (res.Families?.Count ?? 0) > 0 || res.HasSelectedViews || res.HasSelectedSheets;
+                        if (any) SelectedModeBox.IsChecked = true;   // Checked -> OnSelectedModeToggled -> RefreshInfo
+                        else RefreshInfo();
+                    }
+                    catch (Exception ex)
+                    {
+                        GrdLog.Log("FamilyParamsWindow.OnLoadedProbe callback: EXCEPTION " + ex);
+                        RefreshInfo();
+                    }
+                }, true);
+                ev.Raise();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("FamilyParamsWindow.OnLoadedProbe: EXCEPTION " + ex);
+                RefreshInfo();
+            }
         }
 
         /// <summary>Перезапускает отложенное обновление правой панели после изменений в галках.</summary>
@@ -150,7 +209,11 @@ namespace GrdRevit.Ui
 
         private void OnFamilyCheckChanged(object sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(FamilyCheckRow.IsChecked)) DebounceSelection();
+            if (e.PropertyName == nameof(FamilyCheckRow.IsChecked))
+            {
+                DebounceSelection();
+                UpdateScheduleButton();
+            }
         }
 
         /// <summary>
@@ -163,7 +226,204 @@ namespace GrdRevit.Ui
         {
             _selectedMode = SelectedModeBox.IsChecked == true;
             GrdLog.Log("FamilyParamsWindow: режим «выбранные» = " + _selectedMode);
+            UpdateScheduleButton();
             RefreshInfoOrLater();
+        }
+
+        /// <summary>Изменение галочки «В ведомость» в строке параметра: запоминаем имя
+        /// и пересчитываем доступность кнопки «Создать ведомость».</summary>
+        private void OnParamRowChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(FamilyParamRow.IsScheduled)) return;
+            var row = sender as FamilyParamRow;
+            if (row == null) return;
+            if (row.IsScheduled) _scheduledNames.Add(row.Name);
+            else _scheduledNames.Remove(row.Name);
+            UpdateScheduleButton();
+        }
+
+        /// <summary>Доступность «Создать ведомость»: только в режиме «Только выбранные»
+        /// при наличии отмеченных семейств и отмеченных параметров.</summary>
+        private void UpdateScheduleButton()
+        {
+            bool ok = _selectedMode
+                && FamilyChecks.Any(f => f.IsChecked)
+                && SelParams.Any(p => p.IsScheduled && !p.IsNativeType);
+            CreateScheduleButton.IsEnabled = ok;
+        }
+
+        /// <summary>Отображаемое имя нативного параметра «Тип».</summary>
+        public const string NativeTypeName = "Тип";
+
+        /// <summary>Гарантирует наличие в списке нативного «Типа» первой строкой.
+        /// Он не входит в FamilyManager, но в ведомость попадает всегда, первой
+        /// колонкой, и по нему выполняется сортировка.</summary>
+        private void EnsureTypeRow()
+        {
+            foreach (var r in SelParams)
+            {
+                if (!string.Equals(r.Name, NativeTypeName, StringComparison.OrdinalIgnoreCase)) continue;
+                r.IsNativeType = true;
+                if (!r.IsScheduled) r.IsScheduled = true;
+                return;
+            }
+
+            var row = new FamilyParamRow
+            {
+                Name = NativeTypeName,
+                IsShared = false,
+                IsInstance = true,
+                IsInFamily = true,
+                HasFormula = false,
+                StorageType = "Текст",
+                Group = "Навигация",
+                Guid = string.Empty,
+                IsNativeType = true,
+                IsScheduled = true
+            };
+            row.PropertyChanged += OnParamRowChanged;
+            SelParams.Insert(0, row);
+            _scheduledNames.Add(NativeTypeName);
+        }
+
+        /// <summary>
+        /// «Создать ведомость»: создаёт спецификации по выбранным элементам с полями
+        /// отмеченных параметров. Фильтр «только выбранные экземпляры» — временным общим
+        /// параметром плагина и штатным фильтром Revit (см. ScheduleCreateHandler).
+        /// </summary>
+        private void OnCreateSchedule(object sender, RoutedEventArgs e)
+        {
+            if (!_selectedMode)
+            {
+                MessageBox.Show("Создание ведомости доступно только в режиме «Только выбранные / спецификация»: " +
+                    "включите галочку слева вверху (выделите элементы в Revit или откройте спецификацию).",
+                    "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var families = FamilyChecks.Where(f => f.IsChecked && !FamilyInfoHandler.IsPseudoName(f.Name))
+                .Select(f => f.Name).ToList();
+            bool includeViews = FamilyChecks.Any(f => f.IsChecked &&
+                string.Equals(f.Name, FamilyInfoHandler.PseudoViewsName, StringComparison.Ordinal));
+            bool includeSheets = FamilyChecks.Any(f => f.IsChecked &&
+                string.Equals(f.Name, FamilyInfoHandler.PseudoSheetsName, StringComparison.Ordinal));
+
+            if (families.Count == 0 && !includeViews && !includeSheets)
+            {
+                MessageBox.Show("Отметьте хотя бы одно семейство (или «Виды»/«Листы») слева.",
+                    "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var scheduled = SelParams.Where(p => p.IsScheduled && !p.IsNativeType)
+                    .Select(p => new ScheduleParamRef(p.Name, p.Guid)).ToList();
+            if (scheduled.Count == 0)
+            {
+                MessageBox.Show("Отметьте галочкой «В ведомость» хотя бы один параметр в правой таблице " +
+                    "(кроме нативного «Типа» — он добавляется всегда).",
+                    "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_scopeIds == null || _scopeIds.Count == 0)
+            {
+                MessageBox.Show("Область «только выбранные» пуста: выделите элементы в Revit или откройте спецификацию, " +
+                    "а затем нажмите «Обновить» (кнопка над списком семейств).",
+                    "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                if (_scheduleBusy || _applying)
+                {
+                    MessageBox.Show("Операция уже выполняется, подождите завершения.",
+                        "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var ev = RevitContext.ScheduleCreateEvent;
+                var handler = RevitContext.ScheduleCreateHandler;
+                if (ev == null || handler == null)
+                {
+                    MessageBox.Show("Обработчик создания ведомости не доступен.",
+                        "Создать ведомость", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                GrdLog.Log("OnCreateSchedule: семейств=" + families.Count +
+                           ", виды=" + includeViews + ", листы=" + includeSheets +
+                           ", параметров=" + scheduled.Count + ", элементов=" + _scopeIds.Count);
+                _scheduleBusy = true;
+                BeginApplying("Создание ведомости…");
+                handler.Queue(families, includeViews, includeSheets, scheduled, _scopeIds, OnScheduleDone);
+                ev.Raise();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("OnCreateSchedule: EXCEPTION " + ex);
+                _scheduleBusy = false;
+                MessageBox.Show("Ошибка: " + ex.Message, "Создать ведомость",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>Завершение создания ведомости: прячем прогресс и показываем итог.</summary>
+        private void OnScheduleDone(ScheduleCreateResult result)
+        {
+            _scheduleBusy = false;
+            try { EndApplying(); }
+            catch (Exception ex) { GrdLog.Log("OnScheduleDone (end): EXCEPTION " + ex); }
+            ShowScheduleResult(result);
+        }
+
+        private void ShowScheduleResult(ScheduleCreateResult result)
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                if (result != null && result.Created.Count > 0)
+                {
+                    sb.Append("Создано ведомостей: " + result.Created.Count +
+                              " (выбрано элементов: " + result.ElementsMarked + ").");
+                    sb.AppendLine();
+                    sb.Append(string.Join(Environment.NewLine, result.Created));
+                }
+                if (result != null && result.SkippedParams.Count > 0)
+                {
+                    sb.AppendLine().AppendLine("Параметры не попали в поля (их нет у элементов этих категорий):");
+                    sb.Append(string.Join("; ", result.SkippedParams));
+                }
+                if (result != null && result.Errors.Count > 0)
+                {
+                    if (sb.Length > 0) sb.AppendLine().AppendLine();
+                    sb.AppendLine("Ошибки:");
+                    sb.Append(string.Join(Environment.NewLine, result.Errors));
+                }
+                if (sb.Length == 0) sb.Append("Ничего не создано.");
+
+                GrdLog.Log("FamilyParamsWindow.ShowScheduleResult: " +
+                           sb.ToString().Replace("\r", " ").Replace("\n", " "));
+
+                var td = new TaskDialog("Создание ведомости")
+                {
+                    MainInstruction = result != null && result.Errors.Count == 0
+                        ? "Ведомость создана"
+                        : result != null && result.Created.Count > 0
+                            ? "Ведомость создана (с ошибками)"
+                            : "Не удалось создать ведомость",
+                    MainContent = sb.ToString(),
+                    ExpandedContent = "Ведомость показывает только выбранные экземпляры: она отфильтрована по " +
+                        "общему параметру «" + SharedMarkerParam.ScheduleMarkerName + "» (значение 1 на выбранных элементах) " +
+                        "штатным фильтром Revit. Параметр создаёт плагин и остаётся в проекте — удалять его нельзя, " +
+                        "иначе сломается фильтр ведомости. Маркер сбрасывается при каждом новом запуске."
+                };
+                td.Show();
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ShowScheduleResult: EXCEPTION " + ex);
+            }
         }
 
         private void RefreshInfoOrLater()
@@ -197,6 +457,15 @@ namespace GrdRevit.Ui
                     try
                     {
                         FamilyChecks.Clear();
+                        // Псевдозаписи «Виды»/«Листы»: не семейства, но их параметры
+                        // тоже можно смотреть и выводить в ведомость.
+                        var pseudoViews = new FamilyCheckRow(FamilyInfoHandler.PseudoViewsName);
+                        pseudoViews.PropertyChanged += OnFamilyCheckChanged;
+                        FamilyChecks.Add(pseudoViews);
+                        var pseudoSheets = new FamilyCheckRow(FamilyInfoHandler.PseudoSheetsName);
+                        pseudoSheets.PropertyChanged += OnFamilyCheckChanged;
+                        FamilyChecks.Add(pseudoSheets);
+
                         foreach (var f in result.Families)
                         {
                             var row = new FamilyCheckRow(f.Name);
@@ -204,18 +473,37 @@ namespace GrdRevit.Ui
                             FamilyChecks.Add(row);
                         }
                         FamiliesCount.Text = string.IsNullOrEmpty(result.Error)
-                            ? "семейств: " + FamilyChecks.Count
+                            ? "семейств: " + result.Families.Count
                             : result.Error;
+                        _scopeIds = result.SelectedElementIds ?? new List<long>();
+                        _scopeHasViews = result.HasSelectedViews;
+                        _scopeHasSheets = result.HasSelectedSheets;
                         if (_selectedMode)
                         {
                             // Режим «только выбранные/спецификация»: отмечаем все найденные
-                            // семейства сразу, чтобы область применения соответствовала
-                            // спецификации либо выделению в Revit.
-                            foreach (var f in FamilyChecks) f.IsChecked = true;
-                            FamiliesCount.Text = FamilyChecks.Count > 0
+                            // семейства сразу, «Виды»/«Листы» — если они попали в область
+                            // (ведомость видов/листов либо выделение) — сразу тоже.
+                            foreach (var f in FamilyChecks)
+                            {
+                                if (string.Equals(f.Name, FamilyInfoHandler.PseudoViewsName, StringComparison.Ordinal))
+                                    f.IsChecked = _scopeHasViews;
+                                else if (string.Equals(f.Name, FamilyInfoHandler.PseudoSheetsName, StringComparison.Ordinal))
+                                    f.IsChecked = _scopeHasSheets;
+                                else
+                                    f.IsChecked = true;
+                            }
+                            FamiliesCount.Text = FamilyChecks.Count(f => f.IsChecked) > 0
                                 ? (string.IsNullOrEmpty(result.Scope)
                                     ? "из выделения в Revit: "
-                                    : "из спецификации «" + result.Scope + "»: ") + FamilyChecks.Count
+                                    : "из спецификации «" + result.Scope + "»: ") +
+                                  (result.Families.Count > 0
+                                    ? result.Families.Count + " семейств" + (result.HasSelectedViews || result.HasSelectedSheets
+                                        ? (_scopeHasViews ? " + виды" : "") + (_scopeHasSheets ? " + листы" : "")
+                                        : "")
+                                    : (_scopeHasViews && _scopeHasSheets ? "виды и листы"
+                                      : _scopeHasViews ? "виды"
+                                      : _scopeHasSheets ? "листы"
+                                      : "не выделено ни одного семейства в активном виде"))
                                 : (string.IsNullOrEmpty(result.Scope)
                                     ? "не выделено ни одного семейства в активном виде"
                                     : "в спецификации «" + result.Scope + "» семейств не найдено");
@@ -226,7 +514,7 @@ namespace GrdRevit.Ui
                         foreach (var d in result.SharedDefs) SharedDefs.Add(new SharedDefRow { Def = d });
 
                         SelParams.Clear();
-                        SelInfo.Text = "Отметьте одно семейство слева — покажутся все его параметры; несколько — только общие для всех.";
+                        SelInfo.Text = "Отметьте семейство слева (или «Виды»/«Листы») — покажутся все его параметры; несколько — только общие для всех.";
 
                         SharedFileInfo.Text = string.IsNullOrEmpty(result.SharedFilePath)
                             ? string.Empty
@@ -254,6 +542,7 @@ namespace GrdRevit.Ui
                     finally
                     {
                         _busy = false;
+                        UpdateScheduleButton();
                     }
                 }, _selectedMode);
                 ev.Raise();
@@ -272,8 +561,9 @@ namespace GrdRevit.Ui
             if (names.Count == 0)
             {
                 SelParams.Clear();
-                SelInfo.Text = "Отметьте одно семейство слева — покажутся все его параметры; несколько — только общие для всех.";
+                SelInfo.Text = "Отметьте семейство слева (или «Виды»/«Листы») — покажутся все его параметры; несколько — только общие для всех.";
                 ApplySelFilter();
+                UpdateScheduleButton();
                 return;
             }
 
@@ -304,13 +594,14 @@ namespace GrdRevit.Ui
                         {
                             SelParams.Clear();
                             SelInfo.Text = result.Error;
+                            UpdateScheduleButton();
                             return;
                         }
 
                         SelParams.Clear();
                         foreach (var p in result.Params)
                         {
-                            SelParams.Add(new FamilyParamRow
+                            var row = new FamilyParamRow
                             {
                                 Name = p.Name,
                                 IsShared = p.IsShared,
@@ -320,8 +611,17 @@ namespace GrdRevit.Ui
                                 StorageType = string.IsNullOrEmpty(p.StorageType) ? "—" : p.StorageType,
                                 Group = string.IsNullOrEmpty(p.Group) ? "—" : p.Group,
                                 Guid = p.Guid ?? string.Empty
-                            });
+                            };
+                            row.IsScheduled = _scheduledNames.Contains(row.Name);
+                            row.PropertyChanged += OnParamRowChanged;
+                            SelParams.Add(row);
                         }
+
+                        // Нативный «Тип» (BuiltInParameter.ELEM_TYPE_PARAM) в FamilyManager
+                        // не значится, поэтому в списке его нет. Показываем его первой
+                        // строкой и отмечаем: в ведомость он попадает всегда, первой
+                        // колонкой, и служит ключом сортировки.
+                        EnsureTypeRow();
 
                         var extra = string.IsNullOrEmpty(result.ParamsMessage) ? string.Empty : "  Предупреждение: " + result.ParamsMessage;
                         if (SelParams.Count == 0)
@@ -349,6 +649,7 @@ namespace GrdRevit.Ui
                     finally
                     {
                         _busy = false;
+                        UpdateScheduleButton();
                     }
                 });
                 ev.Raise();

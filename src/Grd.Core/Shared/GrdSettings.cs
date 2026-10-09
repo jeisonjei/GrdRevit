@@ -90,6 +90,29 @@ namespace GrdRevit.Core
         /// <summary>Держать окна плагина поверх всех остальных окон (Topmost).</summary>
         public bool WindowsTopmost { get; set; } = false;
 
+        /// <summary>Ширины колонок таблицы «Управляющий видами»: заголовок колонки ->
+        /// ширина в пикселях. Сохраняется между запусками Revit после ручного
+        /// изменения ширины пользователем (звёздочные колонки не запоминаются).</summary>
+        public Dictionary<string, double> ViewColumnWidths { get; set; } = new Dictionary<string, double>();
+
+        /// <summary>Галочка «Перенос строк» в таблице «Управляющий видами».</summary>
+        public bool ViewWrapText { get; set; } = false;
+
+        /// <summary>Параметр пространства Revit для приточной системы (импорт .tomat).</summary>
+        public string TomatSupplySystemParam { get; set; } = "Приточная система";
+
+        /// <summary>Параметр пространства Revit для вытяжной системы (импорт .tomat).</summary>
+        public string TomatExhaustSystemParam { get; set; } = "Вытяжная система";
+
+        /// <summary>Параметр пространства Revit для расхода приточного воздуха (импорт .tomat).</summary>
+        public string TomatSupplyAirflowParam { get; set; } = "Расход приточного воздуха";
+
+        /// <summary>Параметр пространства Revit для расхода вытяжного воздуха (импорт .tomat).</summary>
+        public string TomatExhaustAirflowParam { get; set; } = "Расход вытяжного воздуха";
+
+        /// <summary>Путь к файлу .tomat, загруженному последний раз.</summary>
+        public string LastTomatPath { get; set; } = string.Empty;
+
         public static GrdSettings Load(string path)
         {
             try

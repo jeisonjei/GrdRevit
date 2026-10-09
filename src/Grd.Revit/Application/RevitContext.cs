@@ -9,6 +9,35 @@ namespace GrdRevit
         public static UIApplication UiApp;
         public static Autodesk.Revit.DB.Document Doc => UiApp?.ActiveUIDocument?.Document;
 
+        /// <summary>Документ Revit изменён (элементы добавлены/удалены/изменены).
+        /// Подписчики — моделесс-окна, которым нужен автообновляемый список
+        /// (например, «Управляющий видами»): виды, созданные уже после открытия
+        /// окна, должны появляться в таблице без ручного обновления. Событие
+        /// поднимается в потоке Revit — окна обязаны переключаться на свой Dispatcher.</summary>
+        public static event Action DocumentChanged;
+        private static bool _documentChangedHooked;
+
+        private static void HookDocumentChanged()
+        {
+            if (_documentChangedHooked || UiApp == null) return;
+            try
+            {
+                UiApp.Application.DocumentChanged += OnDocumentChanged;
+                _documentChangedHooked = true;
+                GrdLog.Log("RevitContext: DocumentChanged hooked");
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("RevitContext.HookDocumentChanged EXCEPTION: " + ex);
+            }
+        }
+
+        private static void OnDocumentChanged(object sender, Autodesk.Revit.DB.Events.DocumentChangedEventArgs e)
+        {
+            try { DocumentChanged?.Invoke(); }
+            catch (Exception ex) { GrdLog.Log("RevitContext.OnDocumentChanged EXCEPTION: " + ex); }
+        }
+
         /// <summary>
         /// Главное окно Revit. Для владения окнами плагина: берём из API
         /// (UIApplication.MainWindowHandle), не из Process.MainWindowHandle —
@@ -76,6 +105,11 @@ namespace GrdRevit
         public static Revit.FamilyParamsHandler FamilyParamsHandler;
         private static Autodesk.Revit.UI.ExternalEvent _familyParamsEvent;
         public static Autodesk.Revit.UI.ExternalEvent FamilyParamsEvent => _familyParamsEvent;
+
+        /// <summary>Маршалит создание ведомости по выбранным элементам (окно «Параметры семейств»).</summary>
+        public static Revit.ScheduleCreateHandler ScheduleCreateHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _scheduleCreateEvent;
+        public static Autodesk.Revit.UI.ExternalEvent ScheduleCreateEvent => _scheduleCreateEvent;
 
         /// <summary>Маршалит чтение/изменение параметров выбранного экземпляра (без редактора семейства).</summary>
         public static Revit.InstanceParamsHandler InstanceParamsHandler;
@@ -168,6 +202,12 @@ namespace GrdRevit
                 _familyParamsEvent = Autodesk.Revit.UI.ExternalEvent.Create(FamilyParamsHandler);
                 GrdLog.Log("EnsureHandlers: FamilyParamsEvent created");
             }
+            if (_scheduleCreateEvent == null)
+            {
+                ScheduleCreateHandler = new Revit.ScheduleCreateHandler();
+                _scheduleCreateEvent = Autodesk.Revit.UI.ExternalEvent.Create(ScheduleCreateHandler);
+                GrdLog.Log("EnsureHandlers: ScheduleCreateEvent created");
+            }
             if (_instanceParamsEvent == null)
             {
                 InstanceParamsHandler = new Revit.InstanceParamsHandler();
@@ -235,6 +275,7 @@ namespace GrdRevit
                     GrdLog.Log("Init:3 settings loaded");
                 }
                 EnsureHandlers();
+                HookDocumentChanged();
                 GrdLog.Log("Init:9 complete");
             }
             catch (Exception ex)
