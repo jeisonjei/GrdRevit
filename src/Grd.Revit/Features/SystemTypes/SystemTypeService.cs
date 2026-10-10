@@ -68,7 +68,7 @@ namespace GrdRevit.Ui
             return list.OrderBy(o => o.Key == -1 ? 0 : 1).ThenBy(o => o.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
 
-        public static int Apply(Document doc, IEnumerable<SystemTypeRow> rows)
+        public static int Apply(Document doc, bool pipes, IEnumerable<SystemTypeRow> rows, int legendWeight)
         {
             var dirty = rows.Where(r => r.IsDirtyAny).ToList();
             if (dirty.Count == 0) return 0;
@@ -77,6 +77,7 @@ namespace GrdRevit.Ui
                 t.Start();
                 foreach (var row in dirty)
                     ApplyRow(doc, row);
+                SyncLineStyles(doc, rows.ToList(), pipes, legendWeight);
                 t.Commit();
             }
             foreach (var row in dirty)
@@ -123,15 +124,15 @@ namespace GrdRevit.Ui
             return null;
         }
 
-        public static string DrawLegend(Document doc, IReadOnlyList<SystemTypeRow> rows, XYZ pick)
+        public static string DrawLegend(Document doc, bool pipes, IReadOnlyList<SystemTypeRow> rows, XYZ pick, int legendWeight)
         {
             var view = doc.ActiveView;
             if (view == null) return "Нет активного вида для легенды.";
             var vt = view.ViewType;
             if (vt != ViewType.FloorPlan && vt != ViewType.CeilingPlan &&
                 vt != ViewType.Section && vt != ViewType.Elevation &&
-                vt != ViewType.DraftingView)
-                return "Легенда создаётся в графическом виде (план, разрез, фасад или детализация). " +
+                vt != ViewType.DraftingView && vt != ViewType.Legend)
+                return "Легенда создаётся в графическом виде или в виде «Легенда» (план, разрез, фасад, детализация). " +
                        "Активный вид «" + view.Name + "» для этого не подходит.";
             if (rows == null || rows.Count == 0) return "Список типов пуст — рисовать нечего.";
             try
@@ -142,6 +143,7 @@ namespace GrdRevit.Ui
                 using (var t = new Transaction(doc, TxLegend))
                 {
                     t.Start();
+                    var styles = SyncLineStyles(doc, rows, pipes, legendWeight);
                     for (int i = 0; i < rows.Count; i++)
                     {
                         var row = rows[i];
@@ -149,14 +151,8 @@ namespace GrdRevit.Ui
                         var start = new XYZ(pick.X, y, pick.Z);
                         var end = new XYZ(pick.X + lenFt, y, pick.Z);
                         var dl = doc.Create.NewDetailCurve(view, Line.CreateBound(start, end));
-                        var ogs = new OverrideGraphicSettings();
-                        var c = row.ColorValue;
-                        if (c != null && c.IsValid)
-                            ogs.SetProjectionLineColor(c);
-                        ogs.SetProjectionLineWeight(4);
-                        if (row.PatternKey >= 0)
-                            ogs.SetProjectionLinePatternId(new ElementId(row.PatternKey));
-                        view.SetElementOverrides(dl.Id, ogs);
+                        if (styles.TryGetValue(row, out var gs) && gs != null)
+                            dl.LineStyle = gs;
                         var label = row.Name;
                         var abbr = (row.Abbreviation ?? string.Empty).Trim();
                         if (label.Length > 0 && abbr.Length > 0) label += " (" + abbr + ")";
@@ -210,6 +206,76 @@ namespace GrdRevit.Ui
             return "#" + c.Red.ToString("X2") + c.Green.ToString("X2") + c.Blue.ToString("X2");
         }
 
+        
+
+        
+
+        public static Dictionary<SystemTypeRow, GraphicsStyle> SyncLineStyles(
+            Document doc, IReadOnlyList<SystemTypeRow> rows, bool pipes, int legendWeight)
+        {
+            var map = new Dictionary<SystemTypeRow, GraphicsStyle>();
+            try
+            {
+                var prefix = StylePrefix(pipes);
+                var linesCat = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines);
+                if (linesCat == null) return map;
+                var existing = new Dictionary<string, Category>(StringComparer.CurrentCultureIgnoreCase);
+                try
+                {
+                    foreach (Category sub in linesCat.SubCategories)
+                        if (sub != null && !string.IsNullOrEmpty(sub.Name) && !existing.ContainsKey(sub.Name))
+                            existing[sub.Name] = sub;
+                }
+                catch (Exception ex)
+                {
+                    GrdLog.Log("SystemTypeService.SyncLineStyles enumerate EXCEPTION: " + ex.Message);
+                }
+                foreach (var row in rows)
+                {
+                    try
+                    {
+                        var nameRaw = (row.Name ?? string.Empty).Trim();
+                        var styleName = prefix + (nameRaw.Length > 0 ? nameRaw : "Тип " + row.Id.Value);
+                        if (!existing.TryGetValue(styleName, out var styleCat))
+                        {
+                            styleCat = doc.Settings.Categories.NewSubcategory(linesCat, styleName);
+                            existing[styleName] = styleCat;
+                        }
+                        ApplyStyleAppearance(styleCat, row, legendWeight);
+                        var gs = styleCat.GetGraphicsStyle(GraphicsStyleType.Projection);
+                        if (gs == null)
+                            gs = doc.GetElement(styleCat.Id) as GraphicsStyle;
+                        if (gs != null) map[row] = gs;
+                    }
+                    catch (Exception ex)
+                    {
+                        GrdLog.Log("SystemTypeService.SyncLineStyles row EXCEPTION («" + row.Name + "»): " + ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("SystemTypeService.SyncLineStyles EXCEPTION: " + ex.Message);
+            }
+            return map;
+        }
+
+        private static string StylePrefix(bool pipes)
+        {
+            return pipes ? "Grd_Трубы_" : "Grd_Воздуховоды_";
+        }
+
+        private static void ApplyStyleAppearance(Category styleCat, SystemTypeRow row, int legendWeight)
+        {
+            var c = row.ColorValue;
+            if (c != null && c.IsValid)
+                styleCat.LineColor = c;
+            styleCat.SetLineWeight(Math.Max(1, Math.Min(16, legendWeight)), GraphicsStyleType.Projection);
+            styleCat.SetLinePatternId(PatternIdFor(row), GraphicsStyleType.Projection);
+        }
+
+        
+
         private static void ApplyRow(Document doc, SystemTypeRow row)
         {
             if (!(doc.GetElement(row.Id) is MEPSystemType m)) return;
@@ -237,12 +303,17 @@ namespace GrdRevit.Ui
             {
                 try
                 {
-                    m.LinePatternId = row.PatternKey >= 0
-                        ? new ElementId(row.PatternKey)
-                        : ElementId.InvalidElementId;
+                    m.LinePatternId = PatternIdFor(row);
                 }
                 catch (Exception ex) { GrdLog.Log("SystemTypeService.ApplyRow LinePatternId EXCEPTION: " + ex.Message); }
             }
+        }
+
+        private static ElementId PatternIdFor(SystemTypeRow row)
+        {
+            return row.PatternKey >= 0
+                ? new ElementId(row.PatternKey)
+                : LinePatternElement.GetSolidPatternId();
         }
 
         private static string UniqueName(Document doc, string baseName)
@@ -298,7 +369,9 @@ namespace GrdRevit.Ui
             try
             {
                 var id = m.LinePatternId;
-                if (id != null && id != ElementId.InvalidElementId) return id.Value;
+                if (id != null && id != ElementId.InvalidElementId &&
+                    id != LinePatternElement.GetSolidPatternId())
+                    return id.Value;
             }
             catch { }
             return -1;

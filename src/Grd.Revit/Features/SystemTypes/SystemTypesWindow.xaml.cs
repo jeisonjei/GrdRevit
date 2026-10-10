@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI.Selection;
 using GrdRevit.Core;
@@ -21,12 +22,18 @@ namespace GrdRevit.Ui
 
         private bool IsPipes => KindCombo.SelectedIndex == 0;
 
+        private int LegendWeight => LegendWeightCombo.SelectedItem is int w ? w : 4;
+
+        private SystemTypeRow _draggedRow;
+        private System.Windows.Point _dragStartPoint;
+
         public SystemTypesWindow(Document doc)
         {
             InitializeComponent();
             _doc = doc;
             Patterns = SystemTypeService.CollectPatterns(doc);
             KindCombo.SelectedIndex = 0;
+            LegendWeightCombo.SelectedItem = 4;
         }
 
         private void OnKindChanged(object sender, SelectionChangedEventArgs e)
@@ -42,15 +49,19 @@ namespace GrdRevit.Ui
                 Rows.Add(row);
             CountText.Text = "Набор: " + Rows.Count + " типов";
             StatusText.Text = IsPipes
-                ? "Трубопроводные системы (PipingSystemType). Перенумерованные паттерны и цвета применяются по «Сохранить изменения»."
-                : "Системы воздуховодов (MechanicalSystemType). Перенумерованные паттерны и цвета применяются по «Сохранить изменения».";
+                ? "Трубопроводные системы (PipingSystemType). " +
+                  "Изменения применяются по «Сохранить изменения»; для каждого типа создаётся стиль линий «Grd_Трубы_…». " +
+                  "Легенду удобно создавать в виде «Легенда», чтобы разместить её затем на разных листах."
+                : "Системы воздуховодов (MechanicalSystemType). " +
+                  "Изменения применяются по «Сохранить изменения»; для каждого типа создаётся стиль линий «Grd_Воздуховоды_…». " +
+                  "Легенду удобно создавать в виде «Легенда», чтобы разместить её затем на разных листах.";
         }
 
         private void OnSave(object sender, RoutedEventArgs e)
         {
             try
             {
-                int n = SystemTypeService.Apply(_doc, Rows);
+int n = SystemTypeService.Apply(_doc, IsPipes, Rows, LegendWeight);
                 if (n == 0)
                     SnackBar.Show("Нет изменений для сохранения.", SnackBarKind.Info);
                 else
@@ -150,7 +161,9 @@ namespace GrdRevit.Ui
             {
                 pick = uidoc.Selection.PickPoint(
                     "JTOOLS: типы систем — укажите точку вставки легенды. " +
-                    "Первая строка таблицы будет верхней линией стека, остальные ниже её.");
+                    "Строки упорядочиваются так, как они расположены в таблице: верхняя строка — верхняя линия стека, " +
+                    "остальные ниже её. Перетаскивайте строки мышкой, чтобы задать нужный порядок для легенды. " +
+                    "Легенду можно создать и в виде «Легенда», чтобы потом разместить её на листах.");
             }
             catch (Autodesk.Revit.Exceptions.OperationCanceledException)
             {
@@ -166,7 +179,7 @@ namespace GrdRevit.Ui
                 SnackBar.Show("Создание легенды отменено.", SnackBarKind.Info);
                 return;
             }
-            var error = SystemTypeService.DrawLegend(_doc, Rows.ToArray(), pick);
+            var error = SystemTypeService.DrawLegend(_doc, IsPipes, Rows.ToArray(), pick, LegendWeight);
             if (error == null)
                 SnackBar.Show("Легенда создана: " + Rows.Count + " строк.", SnackBarKind.Success);
             else
@@ -174,6 +187,60 @@ namespace GrdRevit.Ui
                 GrdLog.Log("SystemTypesWindow.OnDrawLegend: " + error);
                 SnackBar.Show(error, SnackBarKind.Error);
             }
+        }
+
+        private void OnGridPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _dragStartPoint = e.GetPosition(null);
+        }
+
+        private void OnGridPreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed || !(sender is DataGrid)) return;
+            var diff = _dragStartPoint - e.GetPosition(null);
+            if (Math.Abs(diff.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(diff.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+            var dep = e.OriginalSource as DependencyObject;
+            DataGridRow row = null;
+            while (dep != null)
+            {
+                if (dep is DataGridRow dr) { row = dr; break; }
+                dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+            }
+            if (row == null || !(row.DataContext is SystemTypeRow ctx)) return;
+            _draggedRow = ctx;
+            DragDrop.DoDragDrop(row, ctx, DragDropEffects.Move);
+            _draggedRow = null;
+        }
+
+        private void OnGridDragOver(object sender, DragEventArgs e)
+        {
+            if (_draggedRow == null) { e.Effects = DragDropEffects.None; return; }
+            if (!e.Data.GetDataPresent(typeof(SystemTypeRow))) { e.Effects = DragDropEffects.None; return; }
+            e.Effects = DragDropEffects.Move;
+            e.Handled = true;
+        }
+
+        private void OnGridDrop(object sender, DragEventArgs e)
+        {
+            if (_draggedRow == null) return;
+            if (!e.Data.GetDataPresent(typeof(SystemTypeRow))) return;
+            var targetDep = e.OriginalSource as DependencyObject;
+            DataGridRow targetRow = null;
+            while (targetDep != null)
+            {
+                if (targetDep is DataGridRow dr) { targetRow = dr; break; }
+                targetDep = System.Windows.Media.VisualTreeHelper.GetParent(targetDep);
+            }
+            SystemTypeRow target = null;
+            if (targetRow != null && targetRow.DataContext is SystemTypeRow t) target = t;
+            if (_draggedRow == target) return;
+            int oldIdx = Rows.IndexOf(_draggedRow);
+            int newIdx = target != null ? Rows.IndexOf(target) : Rows.Count - 1;
+            if (oldIdx < 0 || newIdx < 0) return;
+            Rows.Move(oldIdx, newIdx);
+            e.Handled = true;
         }
 
         private void OnClosing(object sender, CancelEventArgs e)
@@ -192,7 +259,7 @@ namespace GrdRevit.Ui
             {
                 try
                 {
-                    int n = SystemTypeService.Apply(_doc, Rows);
+                    int n = SystemTypeService.Apply(_doc, IsPipes, Rows, LegendWeight);
                     SnackBar.Show("Сохранено: " + n + " типов систем.", SnackBarKind.Success);
                 }
                 catch (Exception ex)

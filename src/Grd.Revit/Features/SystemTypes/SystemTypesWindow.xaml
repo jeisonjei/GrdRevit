@@ -19,7 +19,7 @@
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                 CornerRadius="4" Padding="10,6" Margin="0,8,0,0">
             <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"
-                       Text="Правки в таблице не применяются мгновенно: изменённые ячейки подсвечиваются жёлтым, а в модель они попадают только по кнопке «Сохранить изменения». «Копировать» дублирует выбранный тип, «Создать легенду» рисует в активном виде вертикальный стек линий длиной 1000 мм (цвет и тип линий берутся из типов, толщина линий легенды — 4), «Экспорт в Excel» выгружает текущий набор (трубы или воздуховоды)."/>
+                       Text="Правки не применяются мгновенно: изменённые ячейки подсвечиваются жёлтым, в модель они попадают по «Сохранить изменения». Порядок строк соответствует порядку в легенде — перетаскивайте их мышкой. Для каждого типа создаётся стиль линий «Grd_Трубы_…»/«Grd_Воздуховоды_…»: цвет и тип линий берутся из типа, толщина — из «Толщина линий легенды» (4 по умолчанию). Стиль сохраняется при переносе легенды на листы. Легенду можно создавать в графическом виде или в виде «Легенда»."/>
         </Border>
 
         <DockPanel>
@@ -39,9 +39,14 @@
                     <Button Content="Копировать" Click="OnDuplicateSelected" Margin="8,0,0,0"
                             Style="{StaticResource GhostButtonStyle}" Padding="12,5"
                             ToolTip="Дублировать выбранный тип системы: имя «Имя (копия)». Копия создаётся сразу"/>
-                    <Button Content="Создать легенду" Click="OnDrawLegend" Margin="8,0,0,0"
+                    <TextBlock Text="Толщина линий легенды:" VerticalAlignment="Center" Margin="16,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <ComboBox x:Name="LegendWeightCombo" Width="58" Margin="6,0,0,0"
+                              ItemsSource="{Binding Weights, RelativeSource={RelativeSource AncestorType=Window}}"
+                              ToolTip="Толщина линий (1–16) для всех стилей линий легенды сразу. По умолчанию 4"/>
+                    <Button Content="Создать легенду" Click="OnDrawLegend" Margin="12,0,0,0"
                             Style="{StaticResource GhostButtonStyle}" Padding="12,5"
-                            ToolTip="В активном виде слева от указанной точки рисуется вертикальный стек линий по 1000 мм — цвет и тип линий из типа системы, подпись «Имя (Сокращение)» справа"/>
+                            ToolTip="Рисует вертикальный стек линий 1000 мм в активном виде (или виде «Легенда») в порядке строк таблицы. Линии используют персональный стиль типа; толщина — из «Толщина линий легенды». Перетаскивайте строки, чтобы изменить порядок"/>
                     <Button Content="Сохранить изменения" Click="OnSave" Margin="8,0,0,0"
                             Style="{StaticResource PrimaryButtonStyle}" Padding="14,5" FontWeight="SemiBold"
                             ToolTip="Применить к типам систем изменённые ячейки текущего набора"/>
@@ -59,31 +64,52 @@
                       SelectionMode="Single"
                       SelectionUnit="FullRow"
                       EnableRowVirtualization="True"
+                      AllowDrop="True"
+                      DragOver="OnGridDragOver"
+                      Drop="OnGridDrop"
+                      PreviewMouseLeftButtonDown="OnGridPreviewMouseLeftButtonDown"
+                      PreviewMouseMove="OnGridPreviewMouseMove"
                       ItemsSource="{Binding Rows, RelativeSource={RelativeSource AncestorType=Window}}">
                 <DataGrid.Columns>
-                    <DataGridTemplateColumn Header="Имя" Width="2*" MinWidth="180" SortMemberPath="Name">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Background="{Binding NameDirtyBrush}"
-                                         BorderThickness="0" Padding="4,0" Margin="2,2"
-                                         VerticalContentAlignment="Center"
-                                         ToolTip="Имя типа системы (видно в окне свойств типа и в настройках панели)"/>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Имя" Width="2*" MinWidth="180" SortMemberPath="Name"
+                                        Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Background" Value="{Binding NameDirtyBrush}"/>
+                                <Setter Property="Margin" Value="2,2"/>
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                        <DataGridTextColumn.EditingElementStyle>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Background" Value="{Binding NameDirtyBrush}"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Padding" Value="4,0"/>
+                                <Setter Property="Margin" Value="2,2"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            </Style>
+                        </DataGridTextColumn.EditingElementStyle>
+                    </DataGridTextColumn>
 
-                    <DataGridTemplateColumn Header="Сокращение" Width="*" MinWidth="90" SortMemberPath="Abbreviation">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBox Text="{Binding Abbreviation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Background="{Binding AbbreviationDirtyBrush}"
-                                         BorderThickness="0" Padding="4,0" Margin="2,2"
-                                         VerticalContentAlignment="Center"
-                                         ToolTip="Сокращение типа системы (RBS_SYSTEM_ABBREVIATION_PARAM)"/>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Сокращение" Width="*" MinWidth="90" SortMemberPath="Abbreviation"
+                                        Binding="{Binding Abbreviation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Background" Value="{Binding AbbreviationDirtyBrush}"/>
+                                <Setter Property="Margin" Value="2,2"/>
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                        <DataGridTextColumn.EditingElementStyle>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Background" Value="{Binding AbbreviationDirtyBrush}"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Padding" Value="4,0"/>
+                                <Setter Property="Margin" Value="2,2"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            </Style>
+                        </DataGridTextColumn.EditingElementStyle>
+                    </DataGridTextColumn>
 
                     <DataGridTemplateColumn Header="Цвет" Width="*" MinWidth="130" SortMemberPath="ColorSortKey">
                         <DataGridTemplateColumn.CellTemplate>
