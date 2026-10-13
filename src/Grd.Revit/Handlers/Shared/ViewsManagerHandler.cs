@@ -263,8 +263,7 @@ namespace GrdRevit.Revit
                     }
                     if (item.KindKey == null)
                     {
-                        // Показываем только значимые категории (план/разрез/3D, спецификации и близкие).
-                        if (v.ViewType == ViewType.DraftingView || v.ViewType == ViewType.Legend) continue;
+                        // Показываем прочие полезные виды: DraftingView, Legend — без фильтрации
                         item.KindKey = "other";
                     }
                     try
@@ -305,6 +304,10 @@ namespace GrdRevit.Revit
                     return "sheet";
                 case ViewType.Schedule:
                     return "schedule";
+                case ViewType.DraftingView:
+                    return "drafting";
+                case ViewType.Legend:
+                    return "legend";
                 default:
                     return null;
             }
@@ -323,6 +326,8 @@ namespace GrdRevit.Revit
                 case ViewType.ThreeD: return "3D";
                 case ViewType.DrawingSheet: return "Лист";
                 case ViewType.Schedule: return "Спецификация";
+                case ViewType.DraftingView: return "Вид";
+                case ViewType.Legend: return "Легенда";
                 default: return t.ToString();
             }
         }

@@ -493,7 +493,7 @@ namespace GrdRevit.Ui
                               || (show3d && r.KindKey == "3d")
                               || (showSheet && r.KindKey == "sheet")
                               || (showSchedule && r.KindKey == "schedule")
-                              || (showSection && showPlan && show3d && showSheet && showSchedule && r.KindKey == "other");
+                              || ((showSection && showPlan && show3d && showSheet && showSchedule) && (r.KindKey == "other" || r.KindKey == "drafting" || r.KindKey == "legend"));
                 bool nameOk = search.Length == 0;
                 if (!nameOk)
                 {
