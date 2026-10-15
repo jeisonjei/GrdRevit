@@ -641,8 +641,13 @@ namespace GrdRevit.Revit
             if (!isFree && rectH > 0 && layout.TotalH > rectH)
             {
                 double k = rectH / layout.TotalH;
-                layout = BuildLayout(headers, rows, rectW, Math.Max(1.6 * MmFt, layout.TextH * k), colWidths);
+                layout = BuildLayout(headers, rows, rectW, Math.Max(2.3 * MmFt, layout.TextH * k), colWidths);
             }
+
+            // if (!isFree && rectH > 0 && layout.TotalH > rectH)
+            // {
+            //     layout = BuildLayout(headers, rows, rectW, 2.5 * MmFt, colWidths);
+            // }
 
             double cropW = Math.Min(layout.TotalW,
                 isFree ? Math.Max(0.0, frameRight - inset - left) : (frameRight - frameLeft));
