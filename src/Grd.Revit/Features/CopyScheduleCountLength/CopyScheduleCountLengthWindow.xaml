@@ -1,0 +1,40 @@
+<Window x:Class="GrdRevit.Ui.CopyScheduleCountLengthWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JTOOLS: копировать колонку в параметр"
+        Width="560" Height="330"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Значения выбранной колонки спецификации построчно записываются в параметр элементов каждой строки." TextWrapping="Wrap" Foreground="{StaticResource TextPrimaryBrush}"/>
+        <TextBlock Grid.Row="1" Margin="0,10,0,0" Text="Копировать из колонки:" Foreground="{StaticResource TextSecondaryBrush}"/>
+        <ComboBox x:Name="SourceCombo" Grid.Row="2" Margin="0,4,0,0" DisplayMemberPath="Name"/>
+        <TextBlock Grid.Row="3" Margin="0,10,0,0" Text="Записать в параметр:" Foreground="{StaticResource TextSecondaryBrush}"/>
+        <ComboBox x:Name="TargetCombo" Grid.Row="4" Margin="0,4,0,0" DisplayMemberPath="Name"/>
+        <TextBlock x:Name="StatusText" Grid.Row="5" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"/>
+        <CheckBox x:Name="SkipFilledCheck" Grid.Row="6" Margin="0,10,0,0"
+                  Content="Пропустить копирование для заполненных значений"
+                  Foreground="{StaticResource TextPrimaryBrush}"/>
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="ClearBtn" Content="Очистить целевой параметр" Click="OnClear" Margin="0,0,8,0" Padding="16,6"/>
+            <Button x:Name="ExecuteBtn" Content="Выполнить" Click="OnExecute" Style="{StaticResource PrimaryButtonStyle}" Padding="16,6"/>
+        </StackPanel>
+    </Grid>
+</Window>
