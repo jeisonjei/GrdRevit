@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -44,38 +45,251 @@ namespace GrdRevit.Ui
     }
 
     /// <summary>Строка редактируемой таблицы снимка: значения ячеек хранятся в памяти,
-    /// в модель не пишутся. Изменения ячеек работают через двухстороннюю привязку к индексам.
-    /// ChangedMask хранит битовую маску ячеек, отличающихся от данных модели.</summary>
+    /// в модель не пишутся. ChangedMask — битовая маска ячеек, отличающихся от данных
+    /// модели; BoldMask — маска жирных ячеек; MatchMask — маска ячеек, найденных поиском;
+    /// SourceIndex — номер строки-источника в модели (-1 у добавленной строки);
+    /// IsDeleted — строка помечена удалённой (показывается зачёркнутой, но не выгружается).</summary>
     public sealed class SnapshotRow : INotifyPropertyChanged
     {
-        private long _mask;
+        private long _changed;
+        private long _bold;
+        private long _match;
+        private bool _deleted;
+        private bool _added;
 
         public SnapshotRow(string[] cells) { Cells = new CellCollection(cells); }
 
         public CellCollection Cells { get; }
 
+        /// <summary>Спецификация (запись), которой принадлежит строка.</summary>
+        public ScheduleEntry Owner { get; set; }
+
+        /// <summary>Номер строки-источника в данных модели (-1 — строка добавлена пользователем).</summary>
+        public int SourceIndex { get; set; } = -1;
+
         public long ChangedMask
         {
-            get { return _mask; }
-            private set
-            {
-                if (_mask == value) return;
-                _mask = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChangedMask)));
-            }
+            get { return _changed; }
+            private set { if (_changed == value) return; _changed = value; Notify(nameof(ChangedMask)); }
         }
+
+        public long BoldMask
+        {
+            get { return _bold; }
+            set { if (_bold == value) return; _bold = value; Notify(nameof(BoldMask)); }
+        }
+
+        public long MatchMask
+        {
+            get { return _match; }
+            private set { if (_match == value) return; _match = value; Notify(nameof(MatchMask)); }
+        }
+
+        public bool IsDeleted
+        {
+            get { return _deleted; }
+            set { if (_deleted == value) return; _deleted = value; Notify(nameof(IsDeleted)); }
+        }
+
+        /// <summary>Строка добавлена пользователем (нет источника в модели) — подсвечивается зелёным.</summary>
+        public bool MarkAdded
+        {
+            get { return _added; }
+            set { if (_added == value) return; _added = value; Notify(nameof(IsAdded)); }
+        }
+
+        public bool IsAdded => _added;
+
+        public bool IsGroupStart => false;
+
+        public string GroupLabel => string.Empty;
 
         public void SetChanged(int index, bool changed)
         {
             if (index < 0 || index > 62) return;
             long bit = 1L << index;
-            ChangedMask = changed ? (_mask | bit) : (_mask & ~bit);
+            ChangedMask = changed ? (_changed | bit) : (_changed & ~bit);
+        }
+
+        public void ClearChanged() { ChangedMask = 0; }
+
+        public void ClearMatch() { MatchMask = 0; }
+
+        public void SetMatch(int index, bool match)
+        {
+            if (index < 0 || index > 62) return;
+            long bit = 1L << index;
+            MatchMask = match ? (_match | bit) : (_match & ~bit);
+        }
+
+        public bool IsBold(int index) { return index >= 0 && index < 62 && (_bold & (1L << index)) != 0L; }
+
+        public void ToggleBold(int index)
+        {
+            if (index < 0 || index > 62) return;
+            BoldMask = IsBold(index) ? (_bold & ~(1L << index)) : (_bold | (1L << index));
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        private void Notify(string name) { PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
+    }
+
+    /// <summary>Одна редактируемая спецификация (запись снимка): заголовки, строки модели
+    /// и строки с правками. Объекты строк общие для представлений «По листам» и «Всё»,
+    /// поэтому правки синхронны в обоих.</summary>
+    public sealed class ScheduleEntry
+    {
+        public string Key = string.Empty;
+        public long ScheduleId;
+        public long SheetId;
+        public int SegmentIndex;
+        public string ScheduleName = string.Empty;
+        public string SheetNumber = string.Empty;
+        public string SheetName = string.Empty;
+        public bool IsFree;
+        public long TemplateScheduleId;
+        public double SheetWidthMm;
+        public double SheetHeightMm;
+
+        public List<string> Headers = new List<string>();
+        public List<string> ModelHeaders = new List<string>();
+        public List<string[]> ModelRows; // null — у свободной спецификации
+        public ObservableCollection<SnapshotRow> Rows = new ObservableCollection<SnapshotRow>();
+        public bool Dirty;
+
+        public string GroupLabel =>
+            "Лист " + (string.IsNullOrWhiteSpace(SheetNumber) ? "—" : SheetNumber) +
+            (string.IsNullOrWhiteSpace(SheetName) ? string.Empty : " · " + SheetName) +
+            " — «" + ScheduleName + "»";
+
+        /// <summary>Пересчитывает подсветку: изменённые ячейки (жёлтый), добавленные строки
+        /// (зелёный). Строки удалённые/добавленные не сравниваются поячеечно.</summary>
+        public void RecomputeChanged()
+        {
+            foreach (var row in Rows)
+            {
+                if (IsFree || row.IsDeleted || row.SourceIndex < 0)
+                {
+                    row.ClearChanged();
+                    row.MarkAdded = !IsFree && !row.IsDeleted && row.SourceIndex < 0;
+                    continue;
+                }
+                row.MarkAdded = false;
+                for (int c = 0; c < row.Cells.Length; c++)
+                {
+                    bool changed;
+                    if (ModelRows != null && row.SourceIndex < ModelRows.Count &&
+                        c < ModelRows[row.SourceIndex].Length)
+                        changed = !string.Equals(row.Cells[c], ModelRows[row.SourceIndex][c], StringComparison.Ordinal);
+                    else
+                        changed = true;
+                    row.SetChanged(c, changed);
+                }
+            }
+        }
+
+        public SerializedSchedule ToSerialized()
+        {
+            var s = new SerializedSchedule
+            {
+                ScheduleId = ScheduleId,
+                ScheduleName = ScheduleName,
+                IsFree = IsFree,
+                TemplateScheduleId = TemplateScheduleId,
+                SheetId = SheetId,
+                SegmentIndex = SegmentIndex
+            };
+            s.Headers.AddRange(Headers);
+            foreach (var row in Rows)
+            {
+                s.Rows.Add(row.Cells.ToArray());
+                s.Sources.Add(row.SourceIndex);
+                s.Bolds.Add(row.BoldMask);
+                s.Deleted.Add(row.IsDeleted);
+            }
+            return s;
+        }
+    }
+
+    /// <summary>Строка объединённого представления «Всё»: оборачивает исходную строку и
+    /// проецирует её ячейки/маски на объединённый набор колонок (Map: колонка вида ->
+    /// колонка источника, -1 если колонки нет).</summary>
+    public sealed class AllRow : INotifyPropertyChanged
+    {
+        private readonly int[] _map;
+        private readonly long _foreign;
+
+        public AllRow(SnapshotRow source, int[] map)
+        {
+            Source = source;
+            _map = map ?? new int[0];
+            for (int i = 0; i < _map.Length && i < 62; i++)
+                if (_map[i] < 0) _foreign |= 1L << i;
+            Source.PropertyChanged += (s, e) => RaiseAll();
+        }
+
+        public SnapshotRow Source { get; }
+
+        public bool IsGroupStart { get; set; }
+        public string GroupLabel { get; set; } = string.Empty;
+
+        public string this[int index]
+        {
+            get { int s = Src(index); return s < 0 ? null : Source.Cells[s]; }
+            set { int s = Src(index); if (s >= 0) Source.Cells[s] = value; }
+        }
+
+        public int SourceColumn(int viewIndex) { return Src(viewIndex); }
+
+        private int Src(int i) { return i >= 0 && i < _map.Length ? _map[i] : -1; }
+
+        public long ViewChanged => Remap(Source.ChangedMask);
+        public long ViewBold => Remap(Source.BoldMask);
+        public long ViewMatch => Remap(Source.MatchMask);
+
+        /// <summary>Биты колонок объединённого вида, которых нет у этой спецификации
+        /// (не редактируются — для них нет исходной колонки).</summary>
+        public long ViewForeign => _foreign;
+
+        private long Remap(long mask)
+        {
+            if (mask == 0) return 0;
+            long r = 0;
+            for (int i = 0; i < _map.Length && i < 62; i++)
+            {
+                int s = _map[i];
+                if (s >= 0 && s < 62 && (mask & (1L << s)) != 0L) r |= (1L << i);
+            }
+            return r;
+        }
+
+        public bool IsAdded => Source.IsAdded;
+        public bool IsDeleted => Source.IsDeleted;
+
+        public string[] ToUnionArray()
+        {
+            var a = new string[_map.Length];
+            for (int i = 0; i < _map.Length; i++) a[i] = this[i];
+            return a;
+        }
+
+        private void RaiseAll()
+        {
+            var pc = PropertyChanged;
+            if (pc == null) return;
+            pc(this, new PropertyChangedEventArgs("Item[]"));
+            pc(this, new PropertyChangedEventArgs(nameof(ViewChanged)));
+            pc(this, new PropertyChangedEventArgs(nameof(ViewBold)));
+            pc(this, new PropertyChangedEventArgs(nameof(ViewMatch)));
+            pc(this, new PropertyChangedEventArgs(nameof(IsAdded)));
+            pc(this, new PropertyChangedEventArgs(nameof(IsDeleted)));
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
     }
 
-    /// <summary>Преобразует битовую маску изменённых ячеек в bool для конкретной колонки
+    /// <summary>Преобразует битовую маску в bool для конкретной колонки
     /// (номер колонки передаётся в ConverterParameter).</summary>
     public sealed class MaskBitConverter : IValueConverter
     {
@@ -98,9 +312,10 @@ namespace GrdRevit.Ui
 
     /// <summary>
     /// Окно «Снимок спецификаций»: слева спецификации, размещённые на листах (с поиском),
-    /// справа — редактируемая таблица-снимок. «Обновить из модели» возвращает сетку
-    /// к исходному виду, «Печать в PDF» сохраняет текущую (с правками) в PDF.
-    /// Моделесс-окно не обращается к API напрямую — чтение идёт через ExternalEvent.
+    /// справа — редактируемая таблица-снимок. Две вкладки: «По листам» (одна выбранная
+    /// спецификация) и «Всё» (все избранные спецификации одной таблицей, листы разделены
+    /// линиями). Правки синхронны, хранятся только в плагине. «Печать в PDF» сохраняет
+    /// текущий вид, включая жирный текст.
     /// </summary>
     public partial class ScheduleSnapshotWindow : Window
     {
@@ -120,39 +335,69 @@ namespace GrdRevit.Ui
         {
             var w = d as ScheduleSnapshotWindow;
             if (w?.GridTable == null) return;
-            w.GridTable.RowHeight = (bool)e.NewValue ? double.NaN : 30;
+            double h = (bool)e.NewValue ? double.NaN : 30;
+            w.GridTable.RowHeight = h;
+            if (w.AllTable != null) w.AllTable.RowHeight = h;
         }
 
         private const int UndoLimit = 100;
 
-        private static readonly Brush ChangedCellBrush = CreateChangedBrush();
+        private static readonly Brush ChangedCellBrush = MakeBrush(Color.FromRgb(255, 244, 204));
+        private static readonly Brush MatchBorderBrush = MakeBrush(Color.FromRgb(70, 130, 220));
+        private static readonly Brush DeletedTextBrush = MakeBrush(Color.FromRgb(150, 40, 40));
+        private static readonly Brush ForeignCellBrush = MakeBrush(Color.FromRgb(240, 240, 240));
+        private static readonly Brush SelectedCellBrush = MakeBrush(Color.FromRgb(221, 231, 251));
+        private const string ForeignCellToolTip = "У этой спецификации нет такой колонки — значение нельзя изменить.";
 
-        private static Brush CreateChangedBrush()
+        private static Brush MakeBrush(Color c)
         {
-            var b = new SolidColorBrush(Color.FromRgb(255, 244, 204));
+            var b = new SolidColorBrush(c);
             b.Freeze();
             return b;
         }
 
+        // ---------------------------------------------------------------- состояние
+
+        private sealed class RowState
+        {
+            public string[] Cells;
+            public int Source;
+            public long Bold;
+            public bool Deleted;
+        }
+
+        private sealed class EntryState
+        {
+            public string Key;
+            public List<RowState> Rows = new List<RowState>();
+        }
+
+        private sealed class WindowSnapshot
+        {
+            public List<EntryState> Entries = new List<EntryState>();
+        }
+
         private readonly List<SheetScheduleInfo> _master = new List<SheetScheduleInfo>();
         private readonly ObservableCollection<SheetScheduleInfo> _visible = new ObservableCollection<SheetScheduleInfo>();
-        private readonly ObservableCollection<SnapshotRow> _rows = new ObservableCollection<SnapshotRow>();
-        private readonly List<List<string[]>> _undo = new List<List<string[]>>();
-        private readonly List<List<string[]>> _redo = new List<List<string[]>>();
+        private readonly ObservableCollection<AllRow> _allRows = new ObservableCollection<AllRow>();
+        private readonly Dictionary<string, ScheduleEntry> _entries = new Dictionary<string, ScheduleEntry>(StringComparer.Ordinal);
+        private readonly List<WindowSnapshot> _undo = new List<WindowSnapshot>();
+        private readonly List<WindowSnapshot> _redo = new List<WindowSnapshot>();
+        private readonly List<string> _allHeaders = new List<string>();
 
         private SheetScheduleInfo _selected;
-        private ScheduleTable _table;
-        private List<string[]> _modelRows;
-        private bool _isFree;
-        private long _templateScheduleId;
+        private ScheduleEntry _currentEntry;
         private long _pendingSelectScheduleId;
         private long _pendingSelectSheetId;
-        private List<string[]> _pendingUndoSnapshot;
+        private WindowSnapshot _pendingUndoSnapshot;
         private bool _suppressSel;
-        private bool _loading;
-        private bool _dirty;
+        private bool _loadingList;
+        private bool _initialized;
         private string _docKey = string.Empty;
         private readonly HashSet<string> _favIds = new HashSet<string>(StringComparer.Ordinal);
+
+        private bool IsAllView => ViewTabs != null && ViewTabs.SelectedIndex == 1;
+        private DataGrid ActiveGrid => IsAllView ? AllTable : GridTable;
 
         public ScheduleSnapshotWindow()
         {
@@ -160,22 +405,30 @@ namespace GrdRevit.Ui
             DataContext = this;
             WindowTopmost.Track(this);
             SheetsList.ItemsSource = _visible;
-            GridTable.ItemsSource = _rows;
+            GridTable.ItemsSource = null;
+            AllTable.ItemsSource = _allRows;
             GridTable.RowHeight = double.NaN;
+            AllTable.RowHeight = double.NaN;
             EmptyHint.Visibility = Visibility.Visible;
+            AllEmptyHint.Visibility = Visibility.Visible;
             PrintBtn.IsEnabled = false;
             SheetPrintBtn.IsEnabled = false;
             ScheduleLabel.Text = "Спецификация не выбрана.";
+            GridTable.PreviewMouseLeftButtonDown += OnSheetGridHeaderMouseDown;
+
             UpdateCheckedUi();
             UpdateUndoUi();
             UpdateRowUi();
+            UpdateButtonsForView();
 
-            Closing += (s, e) => SaveCurrentEdits();
+            _initialized = true;
+
+            Closing += (s, e) => SaveAllDirty();
 
             Loaded += (s, e) =>
             {
                 SearchBox.Focus();
-                System.Windows.Input.Keyboard.Focus(SearchBox);
+                Keyboard.Focus(SearchBox);
                 LoadList();
             };
         }
@@ -191,8 +444,8 @@ namespace GrdRevit.Ui
                 PrintStatus.Text = "Обработчик снимков спецификаций недоступен.";
                 return;
             }
-            if (_loading) return;
-            _loading = true;
+            if (_loadingList) return;
+            _loadingList = true;
             try
             {
                 handler.QueueReadList(res =>
@@ -214,14 +467,14 @@ namespace GrdRevit.Ui
                     }
                     finally
                     {
-                        _loading = false;
+                        _loadingList = false;
                     }
                 });
                 ev.Raise();
             }
             catch (Exception ex)
             {
-                _loading = false;
+                _loadingList = false;
                 PrintStatus.Text = "Не удалось запросить список: " + ex.Message;
             }
         }
@@ -233,9 +486,6 @@ namespace GrdRevit.Ui
                                   : (_master.Count % 10 >= 2 && _master.Count % 10 <= 4 && (_master.Count % 100 < 12 || _master.Count % 100 > 14) ? "и" : "й"));
         }
 
-        /// <summary>Загружает избранное для этого документа и расставляет звёздочки
-        /// в списке. Ключ элемента — лист + спецификация (разные листы одного
-        /// носителя избранного — отдельные элементы).</summary>
         private void LoadFavorites()
         {
             _favIds.Clear();
@@ -258,6 +508,7 @@ namespace GrdRevit.Ui
             item.IsFavorite = !item.IsFavorite;
             FavoriteStore.Set(_docKey, "snap", FavKey(item), item.IsFavorite);
             RebuildList();
+            if (IsAllView) EnsureFavouritesLoaded(RebuildAllView);
         }
 
         private void OnFavOnlyChanged(object sender, RoutedEventArgs e)
@@ -286,7 +537,7 @@ namespace GrdRevit.Ui
                 else if (_selected != null)
                 {
                     _selected = null;
-                    ClearTable();
+                    ClearCurrentEntry();
                 }
             }
             finally
@@ -296,7 +547,6 @@ namespace GrdRevit.Ui
             UpdateCheckedUi();
         }
 
-        /// <summary>Отмеченные галочками листы (в порядке списка).</summary>
         private List<SheetScheduleInfo> CheckedItems()
         {
             return _master.Where(x => x.IsChecked).ToList();
@@ -331,34 +581,51 @@ namespace GrdRevit.Ui
             var item = SheetsList.SelectedItem as SheetScheduleInfo;
             if (item != null)
             {
-                // Правки сохраняются автоматически при переходе к другой спецификации,
-                // поэтому подтверждение не запрашивается и ничего не теряется.
-                if (_selected != null && _selected != item)
-                    SaveCurrentEdits();
+                if (_selected != null && _selected != item && _currentEntry != null)
+                    SaveEntry(_currentEntry);
                 _selected = item;
-                SheetPrintBtn.IsEnabled = true;
-                LoadTable(item);
+                LoadSheetEntry(item);
             }
             else if (e.RemovedItems.Count > 0)
             {
-                SaveCurrentEdits();
+                if (_currentEntry != null) SaveEntry(_currentEntry);
                 _selected = null;
-                ClearTable();
+                ClearCurrentEntry();
             }
         }
 
-        // ------------------------------------------------------------------ Таблица
+        // ------------------------------------------------------------------ Загрузка спецификации
 
-        private void LoadTable(SheetScheduleInfo info)
+        private ScheduleEntry FindEntry(long scheduleId, long sheetId)
         {
+            foreach (var e in _entries.Values)
+                if (e.ScheduleId == scheduleId && e.SheetId == sheetId) return e;
+            return null;
+        }
+
+        private static string EntryKey(long scheduleId, long sheetId, int segmentIndex)
+        {
+            return scheduleId.ToString(CultureInfo.InvariantCulture) + ":" +
+                   sheetId.ToString(CultureInfo.InvariantCulture) + ":" +
+                   segmentIndex.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private void LoadSheetEntry(SheetScheduleInfo info)
+        {
+            var existing = FindEntry(info.ScheduleId, info.SheetId);
+            if (existing != null)
+            {
+                SetCurrentEntry(existing);
+                return;
+            }
+
             var handler = RevitContext.ScheduleSnapshotHandler;
             var ev = RevitContext.ScheduleSnapshotEvent;
             if (handler == null || ev == null) return;
-            if (_loading) return;
-            _loading = true;
+
             PrintBtn.IsEnabled = false;
             ScheduleLabel.Text = "Лист " + (string.IsNullOrWhiteSpace(info.SheetNumber) ? "—" : info.SheetNumber) +
-                                 ((string.IsNullOrWhiteSpace(info.SheetName)) ? "" : " · " + info.SheetName) +
+                                 (string.IsNullOrWhiteSpace(info.SheetName) ? "" : " · " + info.SheetName) +
                                  " — «" + info.ScheduleName + "»";
             PrintStatus.Text = "Чтение из модели…";
             try
@@ -367,46 +634,30 @@ namespace GrdRevit.Ui
                 {
                     try
                     {
-                        _loading = false;
                         if (!string.IsNullOrEmpty(res.Error))
                         {
                             PrintStatus.Text = res.Error;
-                            ClearTable();
+                            ClearCurrentEntry();
                             return;
                         }
-                        _table = res.Table;
-                        _isFree = _table.IsFree;
-                        _templateScheduleId = _table.TemplateScheduleId;
-                        _modelRows = _isFree ? null : _table.Rows.Select(r => (string[])r.Clone()).ToList();
                         if (!string.IsNullOrEmpty(res.DocKey)) _docKey = res.DocKey;
-                        bool restored = !_isFree && TryRestoreSaved(_table);
-                        PopulateGrid(_table);
-                        if (_isFree)
-                        {
-                            PrintStatus.Text = "Свободная спецификация (образец заголовков) · строк: " +
-                                               _rows.Count +
+                        var entry = BuildEntry(res.Table, info);
+                        _entries[entry.Key] = entry;
+                        SetCurrentEntry(entry);
+                        if (entry.IsFree)
+                            PrintStatus.Text = "Свободная спецификация · строк: " + entry.Rows.Count +
                                                " · данные хранятся отдельно от модели.";
-                        }
-                        else if (_table.Warning.Length > 0)
-                        {
-                            PrintStatus.Text = _table.Warning;
-                        }
-                        else
-                        {
-                            PrintStatus.Text = "Заголовков: " + _table.Headers.Count +
-                                               " · строк: " + _table.Rows.Count +
-                                               " · правки только в этом окне, в модель они не пишутся.";
-                        }
-
-                        if (restored)
-                        {
-                            _dirty = true;
+                        else if (res.Table.Warning.Length > 0)
+                            PrintStatus.Text = res.Table.Warning;
+                        else if (entry.Dirty)
                             PrintStatus.Text = "Восстановлены сохранённые правки. «Сбросить правки» вернёт данные модели.";
-                        }
+                        else
+                            PrintStatus.Text = "Заголовков: " + entry.Headers.Count +
+                                               " · строк: " + entry.Rows.Count +
+                                               " · правки только в этом окне, в модель они не пишутся.";
                     }
                     catch (Exception ex)
                     {
-                        _loading = false;
                         PrintStatus.Text = "Ошибка отображения: " + ex.Message;
                     }
                 });
@@ -414,545 +665,398 @@ namespace GrdRevit.Ui
             }
             catch (Exception ex)
             {
-                _loading = false;
                 PrintStatus.Text = "Не удалось запустить чтение: " + ex.Message;
             }
         }
 
-        private void PopulateGrid(ScheduleTable table)
+        /// <summary>Строит запись спецификации из прочитанной таблицы модели и сохранённых правок.</summary>
+        private ScheduleEntry BuildEntry(ScheduleTable table, SheetScheduleInfo info)
         {
-            GridTable.Columns.Clear();
-            for (int i = 0; i < table.Headers.Count; i++)
+            var entry = new ScheduleEntry
             {
-                var col = new DataGridTextColumn
+                ScheduleId = table.ScheduleId,
+                SheetId = table.SheetId,
+                SegmentIndex = table.SegmentIndex,
+                ScheduleName = table.ScheduleName,
+                SheetNumber = info?.SheetNumber ?? table.SheetNumber,
+                SheetName = info?.SheetName ?? table.SheetName,
+                IsFree = table.IsFree,
+                TemplateScheduleId = table.TemplateScheduleId,
+                SheetWidthMm = table.SheetWidthMm,
+                SheetHeightMm = table.SheetHeightMm
+            };
+            entry.Key = EntryKey(entry.ScheduleId, entry.SheetId, entry.SegmentIndex);
+            entry.Headers = new List<string>(table.Headers);
+            entry.ModelHeaders = new List<string>(table.Headers);
+            entry.ModelRows = entry.IsFree ? null : table.Rows.Select(r => (string[])r.Clone()).ToList();
+
+            for (int i = 0; i < table.Rows.Count; i++)
+                entry.Rows.Add(new SnapshotRow((string[])table.Rows[i].Clone())
                 {
-                    Header = string.IsNullOrWhiteSpace(table.Headers[i]) ? "(колонка " + (i + 1) + ")" : table.Headers[i],
-                    Binding = new Binding("Cells[" + i + "]")
-                    {
-                        Mode = BindingMode.TwoWay,
-                        UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-                    },
-                    IsReadOnly = false
-                };
-                col.MinWidth = 60;
-                col.Width = new DataGridLength(ColumnWidth(table.Headers[i], table.Rows, i));
-                col.ElementStyle = MakeColumnDisplayStyle();
-                col.EditingElementStyle = MakeColumnEditStyle();
-                col.CellStyle = MakeCellStyle(i);
-                GridTable.Columns.Add(col);
-            }
+                    Owner = entry,
+                    SourceIndex = entry.IsFree ? -1 : i
+                });
 
-            _rows.Clear();
-            foreach (var row in table.Rows)
-                _rows.Add(new SnapshotRow(row));
+            var saved = string.IsNullOrEmpty(_docKey) ? null :
+                ScheduleSnapshotsFile.LoadEntry(_docKey, table.ScheduleId, table.SheetId, table.SegmentIndex);
+            if (saved != null && saved.Headers.Count == entry.Headers.Count)
+                ApplySaved(entry, saved);
 
-            _undo.Clear();
-            _redo.Clear();
-            _pendingUndoSnapshot = null;
-            RecomputeChanged();
-            UpdateUndoUi();
-
-            _dirty = false;
-            PrintBtn.IsEnabled = _rows.Count > 0;
-            UpdateRowUi();
+            entry.RecomputeChanged();
+            return entry;
         }
 
-        private void ClearTable()
+        /// <summary>Подставляет сохранённые правки (строки, добавленные/удалённые строки,
+        /// жирный текст, переименованные заголовки).</summary>
+        private static void ApplySaved(ScheduleEntry entry, SerializedSchedule saved)
         {
-            _table = null;
-            _modelRows = null;
-            _isFree = false;
-            _templateScheduleId = 0;
-            _rows.Clear();
+            entry.Headers = new List<string>(saved.Headers);
+            entry.Rows.Clear();
+            for (int r = 0; r < saved.Rows.Count; r++)
+            {
+                var src = saved.Rows[r] ?? new string[0];
+                var cells = new string[entry.Headers.Count];
+                for (int c = 0; c < cells.Length && c < src.Length; c++) cells[c] = src[c];
+                entry.Rows.Add(new SnapshotRow(cells)
+                {
+                    Owner = entry,
+                    SourceIndex = r < saved.Sources.Count ? saved.Sources[r] : (entry.IsFree ? -1 : r),
+                    IsDeleted = r < saved.Deleted.Count && saved.Deleted[r],
+                    BoldMask = r < saved.Bolds.Count ? saved.Bolds[r] : 0L
+                });
+            }
+            entry.Dirty = true;
+        }
+
+        private void SetCurrentEntry(ScheduleEntry entry)
+        {
+            _currentEntry = entry;
+            GridTable.ItemsSource = entry.Rows;
+            BuildSheetColumns(entry);
+            var view = CollectionViewSource.GetDefaultView(entry.Rows);
+            if (view != null) { view.Filter = null; }
+            ApplySearchToSheet();
+            UpdateSheetLabel(entry);
+            UpdateUndoUi();
+            UpdateRowUi();
+            UpdateButtonsForView();
+        }
+
+        private void UpdateSheetLabel(ScheduleEntry entry)
+        {
+            ScheduleLabel.Text = "Лист " + (string.IsNullOrWhiteSpace(entry.SheetNumber) ? "—" : entry.SheetNumber) +
+                                 (string.IsNullOrWhiteSpace(entry.SheetName) ? "" : " · " + entry.SheetName) +
+                                 " — «" + entry.ScheduleName + "»";
+        }
+
+        private void ClearCurrentEntry()
+        {
+            _currentEntry = null;
+            GridTable.ItemsSource = null;
             GridTable.Columns.Clear();
             _undo.Clear();
             _redo.Clear();
             _pendingUndoSnapshot = null;
             PrintBtn.IsEnabled = false;
             SheetPrintBtn.IsEnabled = false;
-            _dirty = false;
+            ScheduleLabel.Text = "Спецификация не выбрана.";
             UpdateUndoUi();
             UpdateRowUi();
+            UpdateButtonsForView();
         }
 
-        /// <summary>Подставляет сохранённые ранее правки этой спецификации, если набор
-        /// колонок совпадает с моделью. Возвращает true, если правки восстановлены.</summary>
-        private bool TryRestoreSaved(ScheduleTable table)
+        /// <summary>Записывает правки записи на диск (JSON).</summary>
+        private void SaveEntry(ScheduleEntry entry)
         {
-            if (table == null || string.IsNullOrEmpty(_docKey)) return false;
-            var saved = ScheduleSnapshotsFile.LoadEntry(_docKey, table.ScheduleId, table.SheetId, table.SegmentIndex);
-            if (saved == null || saved.Headers.Count != table.Headers.Count) return false;
-            for (int i = 0; i < saved.Headers.Count; i++)
-            {
-                if (!string.Equals(saved.Headers[i], table.Headers[i], StringComparison.Ordinal))
-                    return false;
-            }
-            table.Rows.Clear();
-            foreach (var row in saved.Rows) table.Rows.Add(row);
-            return saved.Rows.Count > 0;
+            if (entry == null || string.IsNullOrEmpty(_docKey)) return;
+            try { ScheduleSnapshotsFile.SaveEntry(_docKey, entry.ToSerialized()); }
+            catch { }
         }
 
-        /// <summary>Записывает текущие правки таблицы на диск (JSON).</summary>
-        private void SaveCurrentEdits()
+        private void SaveAllDirty()
         {
-            if (_table == null || string.IsNullOrEmpty(_docKey) || !_dirty) return;
-            var sched = new SerializedSchedule
-            {
-                ScheduleId = _table.ScheduleId,
-                ScheduleName = _table.ScheduleName,
-                IsFree = _isFree,
-                TemplateScheduleId = _templateScheduleId,
-                SheetId = _table.SheetId,
-                SegmentIndex = _table.SegmentIndex
-            };
-            sched.Headers.AddRange(_table.Headers);
-            foreach (var row in _rows) sched.Rows.Add(row.Cells.ToArray());
-            ScheduleSnapshotsFile.SaveEntry(_docKey, sched);
+            foreach (var e in _entries.Values)
+                if (e.Dirty) SaveEntry(e);
         }
 
-        // ------------------------------------------------------------------ Подсветка изменённых ячеек
+        // ------------------------------------------------------------------ Вкладка «Всё»
 
-        /// <summary>Пересчитывает маску изменённых относительно модели ячеек для каждой строки.</summary>
-        private void RecomputeChanged()
+        private void OnViewTabChanged(object sender, SelectionChangedEventArgs e)
         {
-            // Свободная спецификация не сопоставляется с моделью — подсветки нет.
-            if (_isFree)
+            if (!_initialized) return;
+            UpdateRowUi();
+            UpdateButtonsForView();
+            if (IsAllView)
+                EnsureFavouritesLoaded(RebuildAllView);
+            else
+                ApplySearchToSheet();
+            ApplySearch();
+        }
+
+        private void UpdateButtonsForView()
+        {
+            bool all = IsAllView;
+            bool hasEntry = _currentEntry != null;
+            if (RefreshBtn != null) RefreshBtn.IsEnabled = !all && hasEntry;
+            if (SheetPrintBtn != null) SheetPrintBtn.IsEnabled = !all && hasEntry && _currentEntry.Rows.Count > 0;
+            if (ResetBtn != null) ResetBtn.IsEnabled = !all && hasEntry &&
+                                                        (_currentEntry.ModelRows != null || _currentEntry.IsFree);
+            if (PrintBtn != null) PrintBtn.IsEnabled = all ? _allRows.Count > 0 : hasEntry && _currentEntry.Rows.Count > 0;
+            if (ExportBtn != null) ExportBtn.IsEnabled = all ? _allRows.Count > 0 : hasEntry && _currentEntry.Rows.Count > 0;
+            if (BoldBtn != null) BoldBtn.IsEnabled = all ? _allRows.Count > 0 : hasEntry && _currentEntry.Rows.Count > 0;
+        }
+
+        /// <summary>Гарантирует, что все избранные спецификации прочитаны, затем вызывает done().</summary>
+        private void EnsureFavouritesLoaded(Action done)
+        {
+            var missing = _master.Where(f => f.IsFavorite && FindEntry(f.ScheduleId, f.SheetId) == null).ToList();
+            if (missing.Count == 0) { done(); return; }
+
+            var handler = RevitContext.ScheduleSnapshotHandler;
+            var ev = RevitContext.ScheduleSnapshotEvent;
+            if (handler == null || ev == null) { done(); return; }
+
+            int remaining = missing.Count;
+            foreach (var info in missing)
             {
-                foreach (var fr in _rows)
-                    for (int fc = 0; fc < fr.Cells.Length; fc++)
-                        fr.SetChanged(fc, false);
-                return;
-            }
-            for (int r = 0; r < _rows.Count; r++)
-            {
-                var row = _rows[r];
-                for (int c = 0; c < row.Cells.Length; c++)
+                handler.QueueReadTable(info.SheetId, info.ScheduleId, res =>
                 {
-                    bool changed;
-                    if (_modelRows != null && r < _modelRows.Count && c < _modelRows[r].Length)
-                        changed = !string.Equals(row.Cells[c], _modelRows[r][c], StringComparison.Ordinal);
-                    else
-                        changed = true;
-                    row.SetChanged(c, changed);
+                    try
+                    {
+                        if (string.IsNullOrEmpty(res.Error) && res.Table != null)
+                        {
+                            var entry = BuildEntry(res.Table, info);
+                            if (!_entries.ContainsKey(entry.Key)) _entries[entry.Key] = entry;
+                        }
+                    }
+                    finally
+                    {
+                        remaining--;
+                        if (remaining == 0) done();
+                    }
+                });
+            }
+            try { ev.Raise(); } catch { done(); }
+        }
+
+        /// <summary>Собирает объединённую таблицу из всех избранных спецификаций.</summary>
+        private void RebuildAllView()
+        {
+            _allRows.Clear();
+            _allHeaders.Clear();
+
+            var entries = _master.Where(x => x.IsFavorite)
+                .Select(x => FindEntry(x.ScheduleId, x.SheetId))
+                .Where(e => e != null).ToList();
+
+            bool same = entries.Count > 0;
+            for (int i = 1; i < entries.Count; i++)
+                if (!HeadersEqual(entries[i].Headers, entries[0].Headers)) { same = false; break; }
+
+            if (same)
+            {
+                _allHeaders.AddRange(entries[0].Headers);
+            }
+            else
+            {
+                var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var e in entries)
+                    foreach (var h in e.Headers)
+                    {
+                        var key = h ?? string.Empty;
+                        if (!indexByName.ContainsKey(key)) { indexByName[key] = _allHeaders.Count; _allHeaders.Add(key); }
+                    }
+            }
+
+            BuildAllColumns();
+
+            foreach (var entry in entries)
+            {
+                var map = BuildMap(_allHeaders, entry.Headers, same);
+                bool groupStart = true;
+                foreach (var row in entry.Rows)
+                {
+                    _allRows.Add(new AllRow(row, map)
+                    {
+                        IsGroupStart = groupStart,
+                        GroupLabel = groupStart ? entry.GroupLabel : string.Empty
+                    });
+                    groupStart = false;
                 }
             }
+
+            AllEmptyHint.Visibility = _allRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            AllTable.Visibility = _allRows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            ApplySearchToAll();
+            UpdateButtonsForView();
         }
 
-        private Style MakeCellStyle(int index)
+        private static int[] BuildMap(List<string> union, List<string> entryHeaders, bool same)
+        {
+            var map = new int[union.Count];
+            if (same)
+            {
+                for (int i = 0; i < map.Length; i++) map[i] = i < entryHeaders.Count ? i : -1;
+                return map;
+            }
+            var lookup = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < entryHeaders.Count; i++)
+                if (!lookup.ContainsKey(entryHeaders[i] ?? string.Empty)) lookup[entryHeaders[i] ?? string.Empty] = i;
+            for (int i = 0; i < union.Count; i++)
+                map[i] = lookup.TryGetValue(union[i] ?? string.Empty, out var s) ? s : -1;
+            return map;
+        }
+
+        private static bool HeadersEqual(List<string> a, List<string> b)
+        {
+            if (a == null || b == null || a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        /// <summary>Находит запись для активного представления (текущую — для «По листам»,
+        /// владельца выделенной строки — для «Всё»).</summary>
+        private ScheduleEntry ActiveEntry()
+        {
+            if (!IsAllView) return _currentEntry;
+            foreach (var ci in AllTable.SelectedCells)
+                if (ci.Item is AllRow ar) return ar.Source.Owner;
+            var first = _allRows.FirstOrDefault();
+            return first?.Source.Owner;
+        }
+
+        // ------------------------------------------------------------------ Колонки
+
+        private void BuildSheetColumns(ScheduleEntry entry)
+        {
+            GridTable.Columns.Clear();
+            var rows = entry.Rows.Select(r => r.Cells.ToArray()).ToList();
+            for (int i = 0; i < entry.Headers.Count; i++)
+                GridTable.Columns.Add(MakeColumn(
+                    HeaderText(entry.Headers[i], i),
+                    "Cells[" + i + "]",
+                    "ChangedMask", "BoldMask", "MatchMask",
+                    null,
+                    i, rows, true));
+        }
+
+        private void BuildAllColumns()
+        {
+            AllTable.Columns.Clear();
+            var rows = _allRows.Select(a => a.ToUnionArray()).ToList();
+            for (int i = 0; i < _allHeaders.Count; i++)
+                AllTable.Columns.Add(MakeColumn(
+                    HeaderText(_allHeaders[i], i),
+                    "[" + i + "]",
+                    "ViewChanged", "ViewBold", "ViewMatch",
+                    "ViewForeign",
+                    i, rows, true));
+        }
+
+        private static string HeaderText(string header, int i)
+        {
+            return string.IsNullOrWhiteSpace(header) ? "(колонка " + (i + 1) + ")" : header;
+        }
+
+        private DataGridTextColumn MakeColumn(string header, string cellPath,
+                                              string changedProp, string boldProp, string matchProp,
+                                              string foreignProp,
+                                              int index, List<string[]> rows, bool editable)
+        {
+            var col = new DataGridTextColumn
+            {
+                Header = header,
+                Binding = new Binding(cellPath)
+                {
+                    Mode = BindingMode.TwoWay,
+                    UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
+                },
+                IsReadOnly = !editable
+            };
+            col.MinWidth = 60;
+            col.Width = new DataGridLength(ColumnWidth(header, rows, index));
+            col.ElementStyle = MakeColumnDisplayStyle();
+            col.EditingElementStyle = MakeColumnEditStyle();
+            col.CellStyle = MakeCellStyle(changedProp, boldProp, matchProp, foreignProp, index);
+            return col;
+        }
+
+        private Style MakeCellStyle(string changedProp, string boldProp, string matchProp,
+                                    string foreignProp, int index)
         {
             Style basedOn = null;
             try { basedOn = FindResource(typeof(DataGridCell)) as Style; } catch { }
 
             var st = basedOn != null ? new Style(typeof(DataGridCell), basedOn) : new Style(typeof(DataGridCell));
-            var tr = new DataTrigger
+
+            var bold = new DataTrigger
             {
-                Binding = new Binding(nameof(SnapshotRow.ChangedMask))
-                {
-                    Converter = MaskBitConverter.Instance,
-                    ConverterParameter = index
-                },
+                Binding = new Binding(boldProp) { Converter = MaskBitConverter.Instance, ConverterParameter = index },
                 Value = true
             };
-            tr.Setters.Add(new Setter(DataGridCell.BackgroundProperty, ChangedCellBrush));
-            st.Triggers.Add(tr);
+            bold.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.Bold));
+            st.Triggers.Add(bold);
+
+            var changed = new DataTrigger
+            {
+                Binding = new Binding(changedProp) { Converter = MaskBitConverter.Instance, ConverterParameter = index },
+                Value = true
+            };
+            changed.Setters.Add(new Setter(DataGridCell.BackgroundProperty, ChangedCellBrush));
+            st.Triggers.Add(changed);
+
+            var match = new DataTrigger
+            {
+                Binding = new Binding(matchProp) { Converter = MaskBitConverter.Instance, ConverterParameter = index },
+                Value = true
+            };
+            match.Setters.Add(new Setter(DataGridCell.BorderBrushProperty, MatchBorderBrush));
+            match.Setters.Add(new Setter(DataGridCell.BorderThicknessProperty, new Thickness(1)));
+            st.Triggers.Add(match);
+
+            if (!string.IsNullOrEmpty(foreignProp))
+            {
+                // Колонка объединённого вида, которой нет у этой спецификации: WPF DataGrid
+                // не умеет блокировать редактирование отдельной ячейки (IsReadOnly задаётся
+                // колонкой), поэтому помечаем её визуально и объясняем в подсказке.
+                var foreign = new DataTrigger
+                {
+                    Binding = new Binding(foreignProp) { Converter = MaskBitConverter.Instance, ConverterParameter = index },
+                    Value = true
+                };
+                foreign.Setters.Add(new Setter(DataGridCell.BackgroundProperty, ForeignCellBrush));
+                foreign.Setters.Add(new Setter(Control.ToolTipProperty, ForeignCellToolTip));
+                st.Triggers.Add(foreign);
+
+                // Выделение: иначе серый фон перекрывает цвет выделенного состояния
+                // (базовый триггер Modern.xaml проигрывает триггерам производного стиля).
+                var selected = new Trigger
+                {
+                    Property = DataGridCell.IsSelectedProperty,
+                    Value = true
+                };
+                selected.Setters.Add(new Setter(DataGridCell.BackgroundProperty, SelectedCellBrush));
+                st.Triggers.Add(selected);
+            }
+
             return st;
         }
 
-        // ------------------------------------------------------------------ Отмена / возврат
-
-        private List<string[]> CurrentSnapshot()
-        {
-            var list = new List<string[]>(_rows.Count);
-            foreach (var row in _rows) list.Add(row.Cells.ToArray());
-            return list;
-        }
-
-        private void ApplySnapshot(List<string[]> snap)
-        {
-            int cols = snap.Count > 0 ? snap[0].Length : ColumnCount();
-            while (_rows.Count > snap.Count) _rows.RemoveAt(_rows.Count - 1);
-            while (_rows.Count < snap.Count) _rows.Add(new SnapshotRow(EmptyRow(cols)));
-            for (int r = 0; r < _rows.Count; r++)
-            {
-                var cells = _rows[r].Cells;
-                for (int c = 0; c < cells.Length && c < snap[r].Length; c++)
-                    cells[c] = snap[r][c];
-            }
-        }
-
-        private int ColumnCount()
-        {
-            if (_table != null) return _table.Headers.Count;
-            return GridTable.Columns.Count;
-        }
-
-        private static string[] EmptyRow(int cols)
-        {
-            var cells = new string[cols];
-            for (int i = 0; i < cols; i++) cells[i] = string.Empty;
-            return cells;
-        }
-
-        private static bool SnapshotsDiffer(List<string[]> a, List<string[]> b)
-        {
-            if (a == null || b == null) return true;
-            if (a.Count != b.Count) return true;
-            for (int r = 0; r < a.Count; r++)
-            {
-                if (a[r].Length != b[r].Length) return true;
-                for (int c = 0; c < a[r].Length; c++)
-                {
-                    if (!string.Equals(a[r][c], b[r][c], StringComparison.Ordinal)) return true;
-                }
-            }
-            return false;
-        }
-
-        private void PushUndo(List<string[]> snap)
-        {
-            if (snap == null) return;
-            _undo.Add(snap);
-            while (_undo.Count > UndoLimit) _undo.RemoveAt(0);
-            _redo.Clear();
-        }
-
-        private void UpdateUndoUi()
-        {
-            if (UndoBtn != null) UndoBtn.IsEnabled = _undo.Count > 0;
-            if (RedoBtn != null) RedoBtn.IsEnabled = _redo.Count > 0;
-            if (ResetBtn != null) ResetBtn.IsEnabled = _modelRows != null || (_isFree && _rows.Count > 0);
-        }
-
-        private void UpdateRowUi()
-        {
-            bool hasTable = _table != null;
-            if (AddRowBtn != null) AddRowBtn.IsEnabled = hasTable;
-            if (DelRowBtn != null) DelRowBtn.IsEnabled = hasTable && _rows.Count > 0;
-            if (EmptyHint != null)
-            {
-                EmptyHint.Text = hasTable
-                    ? "В таблице нет строк. Добавьте строку кнопкой «Добавить строку» (Insert)."
-                    : "Выберите спецификацию слева.";
-                EmptyHint.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            }
-            if (GridTable != null)
-                GridTable.Visibility = _rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        }
-
-        private void AfterBulkChange(string status)
-        {
-            _dirty = true;
-            RecomputeChanged();
-            UpdateUndoUi();
-            UpdateRowUi();
-            SaveCurrentEdits();
-            if (!string.IsNullOrEmpty(status)) PrintStatus.Text = status;
-        }
-
-        private void OnUndo(object sender, RoutedEventArgs e) { DoUndo(); }
-
-        private void OnRedo(object sender, RoutedEventArgs e) { DoRedo(); }
-
-        private void DoUndo()
-        {
-            if (_undo.Count == 0) return;
-            _redo.Add(CurrentSnapshot());
-            var snap = _undo[_undo.Count - 1];
-            _undo.RemoveAt(_undo.Count - 1);
-            ApplySnapshot(snap);
-            AfterBulkChange("Действие отменено (Ctrl+Z).");
-        }
-
-        private void DoRedo()
-        {
-            if (_redo.Count == 0) return;
-            _undo.Add(CurrentSnapshot());
-            var snap = _redo[_redo.Count - 1];
-            _redo.RemoveAt(_redo.Count - 1);
-            ApplySnapshot(snap);
-            AfterBulkChange("Действие возвращено (Ctrl+Y).");
-        }
-
-        private void OnReset(object sender, RoutedEventArgs e)
-        {
-            // Свободная спецификация: сброс — это очистка строк (модели-образца у неё нет),
-            // сама запись о свободной спецификации сохраняется.
-            if (_isFree)
-            {
-                if (_rows.Count == 0) return;
-                var rf = MessageBox.Show(this,
-                    "Очистить свободную спецификацию?\n\nВсе введённые строки будут удалены, заголовки колонок останутся.",
-                    "Снимок спецификаций",
-                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-                if (rf != MessageBoxResult.Yes) return;
-                PushUndo(CurrentSnapshot());
-                ApplySnapshot(new List<string[]>());
-                AfterBulkChange("Свободная спецификация очищена.");
-                return;
-            }
-
-            if (_rows.Count == 0 || _modelRows == null) return;
-            var r = MessageBox.Show(this,
-                "Вернуть спецификацию к виду из модели?\n\nВсе правки этой спецификации будут сброшены.",
-                "Снимок спецификаций",
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-            if (r != MessageBoxResult.Yes) return;
-
-            PushUndo(CurrentSnapshot());
-            ApplySnapshot(_modelRows);
-            ScheduleSnapshotsFile.DeleteEntry(_docKey, _table.ScheduleId, _table.SheetId, _table.SegmentIndex);
-            _dirty = false;
-            RecomputeChanged();
-            UpdateUndoUi();
-            UpdateRowUi();
-            PrintStatus.Text = "Правки сброшены к виду из модели.";
-        }
-
-        // ------------------------------------------------------------------ Буфер обмена и автозаполнение
-
-        private void OnGridKeyDown(object sender, KeyEventArgs e)
-        {
-            // Во время правки ячейки не перехватываем стандартные действия текстового поля.
-            if (Keyboard.FocusedElement is TextBox) return;
-            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
-            if (e.Key == Key.Insert) { AddRow(); e.Handled = true; return; }
-            if (e.Key == Key.Delete && ctrl) { DeleteRows(); e.Handled = true; return; }
-            if (!ctrl) return;
-            switch (e.Key)
-            {
-                case Key.C: CopySelection(); e.Handled = true; break;
-                case Key.V: PasteSelection(); e.Handled = true; break;
-                case Key.D: FillDown(); e.Handled = true; break;
-                case Key.Z: DoUndo(); e.Handled = true; break;
-                case Key.Y: DoRedo(); e.Handled = true; break;
-            }
-        }
-
-        private bool GetSelectionRect(out int r0, out int c0, out int r1, out int c1)
-        {
-            r0 = c0 = int.MaxValue;
-            r1 = c1 = -1;
-            foreach (var ci in GridTable.SelectedCells)
-            {
-                int r = GridTable.Items.IndexOf(ci.Item);
-                int c = ci.Column != null ? ci.Column.DisplayIndex : -1;
-                if (r < 0 || c < 0) continue;
-                if (r < r0) r0 = r;
-                if (r > r1) r1 = r;
-                if (c < c0) c0 = c;
-                if (c > c1) c1 = c;
-            }
-            if (r1 < r0 || c1 < c0)
-            {
-                var cur = GridTable.CurrentCell;
-                if (cur.IsValid && cur.Column != null)
-                {
-                    int r = GridTable.Items.IndexOf(cur.Item);
-                    int c = cur.Column.DisplayIndex;
-                    if (r >= 0 && c >= 0) { r0 = r1 = r; c0 = c1 = c; }
-                }
-            }
-            return r0 >= 0 && r1 >= r0 && c1 >= c0;
-        }
-
-        private bool InBounds(int r, int c)
-        {
-            return r >= 0 && r < _rows.Count && c >= 0 && c < _rows[r].Cells.Length;
-        }
-
-        private void CopySelection()
-        {
-            int r0, c0, r1, c1;
-            if (!GetSelectionRect(out r0, out c0, out r1, out c1)) return;
-            if (!InBounds(r0, c0) || !InBounds(r1, c1)) return;
-            var sb = new StringBuilder();
-            for (int r = r0; r <= r1; r++)
-            {
-                for (int c = c0; c <= c1; c++)
-                {
-                    if (c > c0) sb.Append('\t');
-                    sb.Append(_rows[r].Cells[c] ?? string.Empty);
-                }
-                sb.Append("\r\n");
-            }
-            try
-            {
-                Clipboard.SetText(sb.ToString());
-                PrintStatus.Text = "Скопировано в буфер: строк " + (r1 - r0 + 1) + " × колонок " + (c1 - c0 + 1) + ".";
-            }
-            catch (Exception ex)
-            {
-                GrdLog.Log("ScheduleSnapshotWindow.Copy EXCEPTION: " + ex);
-                PrintStatus.Text = "Не удалось скопировать: " + ex.Message;
-            }
-        }
-
-        private void PasteSelection()
-        {
-            string text = null;
-            try { if (Clipboard.ContainsText()) text = Clipboard.GetText(); }
-            catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow.Paste read EXCEPTION: " + ex); }
-            if (string.IsNullOrEmpty(text)) return;
-
-            int r0, c0, r1, c1;
-            if (!GetSelectionRect(out r0, out c0, out r1, out c1)) return;
-
-            var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n').Split('\n');
-            var undo = CurrentSnapshot();
-            bool changed = false;
-            for (int dr = 0; dr < lines.Length; dr++)
-            {
-                int r = r0 + dr;
-                if (r >= _rows.Count) break;
-                var values = lines[dr].Split('\t');
-                for (int dc = 0; dc < values.Length; dc++)
-                {
-                    int c = c0 + dc;
-                    if (!InBounds(r, c)) break;
-                    if (!string.Equals(_rows[r].Cells[c], values[dc], StringComparison.Ordinal))
-                    {
-                        _rows[r].Cells[c] = values[dc];
-                        changed = true;
-                    }
-                }
-            }
-            if (!changed) return;
-            PushUndo(undo);
-            AfterBulkChange("Вставлено из буфера: строк " + lines.Length + ".");
-        }
-
-        private void FillDown()
-        {
-            int r0, c0, r1, c1;
-            if (!GetSelectionRect(out r0, out c0, out r1, out c1)) return;
-            if (r1 <= r0) return;
-            var undo = CurrentSnapshot();
-            bool changed = false;
-            for (int c = c0; c <= c1; c++)
-            {
-                if (!InBounds(r0, c)) continue;
-                var value = _rows[r0].Cells[c];
-                for (int r = r0 + 1; r <= r1; r++)
-                {
-                    if (!InBounds(r, c)) break;
-                    if (!string.Equals(_rows[r].Cells[c], value, StringComparison.Ordinal))
-                    {
-                        _rows[r].Cells[c] = value;
-                        changed = true;
-                    }
-                }
-            }
-            if (!changed) return;
-            PushUndo(undo);
-            AfterBulkChange("Значение заполнено вниз (Ctrl+D).");
-        }
-
-        // ------------------------------------------------------------------ Строки
-
-        private int SelectedRowIndex()
-        {
-            var indices = SelectedRowIndices();
-            return indices.Count > 0 ? indices[0] : -1;
-        }
-
-        /// <summary>Индексы строк, попавших в текущее выделение (по возрастанию, без повторов).</summary>
-        private List<int> SelectedRowIndices()
-        {
-            var set = new SortedSet<int>();
-            foreach (var ci in GridTable.SelectedCells)
-            {
-                int r = GridTable.Items.IndexOf(ci.Item);
-                if (r >= 0) set.Add(r);
-            }
-            if (set.Count == 0)
-            {
-                var cur = GridTable.CurrentCell;
-                if (cur.IsValid)
-                {
-                    int r = GridTable.Items.IndexOf(cur.Item);
-                    if (r >= 0) set.Add(r);
-                }
-            }
-            return set.ToList();
-        }
-
-        private void OnAddRow(object sender, RoutedEventArgs e) { AddRow(); }
-
-        /// <summary>Добавляет пустую строку: под выделённой строкой, иначе в конец.</summary>
-        private void AddRow()
-        {
-            if (_table == null)
-            {
-                PrintStatus.Text = "Сначала выберите спецификацию.";
-                return;
-            }
-            int cols = ColumnCount();
-            if (cols == 0) return;
-
-            var undo = CurrentSnapshot();
-            int index = _rows.Count;
-            int sel = SelectedRowIndex();
-            if (sel >= 0 && sel < _rows.Count) index = sel + 1;
-
-            var row = new SnapshotRow(EmptyRow(cols));
-            _rows.Insert(index, row);
-            PushUndo(undo);
-            AfterBulkChange("Добавлена строка (Insert).");
-            SelectRow(index);
-        }
-
-        private void OnDeleteRow(object sender, RoutedEventArgs e) { DeleteRows(); }
-
-        /// <summary>Удаляет все строки, попавшие в выделение.</summary>
-        private void DeleteRows()
-        {
-            if (_rows.Count == 0) return;
-            var indices = SelectedRowIndices();
-            if (indices.Count == 0)
-            {
-                PrintStatus.Text = "Выберите строку (ячейку) для удаления.";
-                return;
-            }
-
-            var undo = CurrentSnapshot();
-            for (int i = indices.Count - 1; i >= 0; i--)
-            {
-                if (indices[i] >= 0 && indices[i] < _rows.Count) _rows.RemoveAt(indices[i]);
-            }
-            PushUndo(undo);
-            AfterBulkChange("Удалено строк: " + indices.Count + " (Ctrl+Delete).");
-        }
-
-        private void SelectRow(int index)
-        {
-            if (index < 0 || index >= _rows.Count) return;
-            try
-            {
-                GridTable.ScrollIntoView(_rows[index]);
-                if (GridTable.Columns.Count > 0)
-                {
-                    GridTable.SelectedCells.Clear();
-                    GridTable.CurrentCell = new DataGridCellInfo(_rows[index], GridTable.Columns[0]);
-                }
-            }
-            catch (Exception ex)
-            {
-                GrdLog.Log("ScheduleSnapshotWindow.SelectRow EXCEPTION: " + ex);
-            }
-        }
-
-        // ------------------------------------------------------------------ Стили и ширина
-
-        private static Style MakeColumnDisplayStyle()
+        private Style MakeColumnDisplayStyle()
         {
             var st = new Style(typeof(TextBlock));
             st.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.NoWrap));
             st.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.None));
+            var del = new DataTrigger { Binding = new Binding("IsDeleted"), Value = true };
+            del.Setters.Add(new Setter(TextBlock.ForegroundProperty, DeletedTextBrush));
+            del.Setters.Add(new Setter(TextBlock.TextDecorationsProperty, TextDecorations.Strikethrough));
+            st.Triggers.Add(del);
             st.Triggers.Add(WrapTrigger<TextBlock>(TextBlock.TextWrappingProperty));
             return st;
         }
 
-        private static Style MakeColumnEditStyle()
+        private Style MakeColumnEditStyle()
         {
             var st = new Style(typeof(TextBox));
             st.Setters.Add(new Setter(TextBox.TextWrappingProperty, TextWrapping.NoWrap));
@@ -977,7 +1081,9 @@ namespace GrdRevit.Ui
             double w = Math.Max(header?.Length ?? 0, 4) * 7.2 + 16;
             for (int r = 0; r < rows.Count && r < 500; r++)
             {
-                var cell = rows[r][cIndex];
+                var row = rows[r];
+                if (row == null || cIndex >= row.Length) continue;
+                var cell = row[cIndex];
                 if (cell == null) continue;
                 if (cell.Length > 60) return 320;
                 w = Math.Max(w, cell.Length * 7.2 + 16);
@@ -985,27 +1091,770 @@ namespace GrdRevit.Ui
             return Math.Min(w, 320);
         }
 
-        // ------------------------------------------------------------------ Кнопки
+        // ------------------------------------------------------------------ Переименование колонок
 
-        private void OnRefresh(object sender, RoutedEventArgs e)
+        private void OnSheetGridHeaderMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (_selected == null) return;
-            if (_isFree)
+            if (e.ClickCount != 2) return;
+            if (_currentEntry == null) return;
+            var header = FindAncestor<DataGridColumnHeader>(e.OriginalSource as DependencyObject);
+            if (header == null || header.Column == null) return;
+            int idx = header.Column.DisplayIndex;
+            if (idx < 0 || idx >= _currentEntry.Headers.Count) return;
+            BeginHeaderEdit(header, header.Column, idx);
+            e.Handled = true;
+        }
+
+        private void BeginHeaderEdit(DataGridColumnHeader header, DataGridColumn column, int index)
+        {
+            var entry = _currentEntry;
+            if (entry == null) return;
+            string current = entry.Headers[index];
+            var tb = new TextBox
             {
-                LoadTable(_selected);
+                Text = current ?? string.Empty,
+                Padding = new Thickness(2, 0, 2, 0),
+                MinWidth = 60,
+                BorderBrush = MatchBorderBrush,
+                BorderThickness = new Thickness(1),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+
+            bool done = false;
+            Action commit = () =>
+            {
+                if (done) return;
+                done = true;
+                entry.Headers[index] = tb.Text ?? string.Empty;
+                column.Header = HeaderText(entry.Headers[index], index);
+                entry.Dirty = true;
+                SaveEntry(entry);
+                PrintStatus.Text = "Колонка переименована: «" + entry.Headers[index] + "».";
+            };
+
+            tb.KeyDown += (s, args) =>
+            {
+                if (args.Key == Key.Enter) { commit(); args.Handled = true; }
+                else if (args.Key == Key.Escape) { done = true; column.Header = current; }
+            };
+            tb.LostFocus += (s, args) => commit();
+            tb.Loaded += (s, args) => { tb.Focus(); tb.SelectAll(); };
+
+            column.Header = tb;
+        }
+
+        private static T FindAncestor<T>(DependencyObject d) where T : DependencyObject
+        {
+            while (d != null)
+            {
+                if (d is T t) return t;
+                d = d is Visual || d is System.Windows.Media.Media3D.Visual3D
+                    ? VisualTreeHelper.GetParent(d)
+                    : LogicalTreeHelper.GetParent(d);
+            }
+            return null;
+        }
+
+        // ------------------------------------------------------------------ Поиск (fuzzy)
+
+        private void OnTableSearchChanged(object sender, RoutedEventArgs e)
+        {
+            ApplySearch();
+        }
+
+        private void OnTableSearchReset(object sender, RoutedEventArgs e)
+        {
+            TableSearchBox.Clear();
+        }
+
+        private void ApplySearch()
+        {
+            if (IsAllView) ApplySearchToAll();
+            else ApplySearchToSheet();
+        }
+
+        private string SearchQuery()
+        {
+            return (TableSearchBox?.Text ?? string.Empty).Trim();
+        }
+
+        private void ApplySearchToSheet()
+        {
+            var entry = _currentEntry;
+            if (entry == null) return;
+            var q = SearchQuery();
+
+            foreach (var row in entry.Rows)
+            {
+                row.ClearMatch();
+                if (q.Length == 0) continue;
+                for (int c = 0; c < row.Cells.Length; c++)
+                    if (FuzzyMatch(row.Cells[c], q)) row.SetMatch(c, true);
+            }
+
+            var view = CollectionViewSource.GetDefaultView(entry.Rows);
+            if (view != null)
+            {
+                bool filter = q.Length > 0 && TableFilterCheck != null && TableFilterCheck.IsChecked == true;
+                view.Filter = filter ? (Predicate<object>)(o => o is SnapshotRow r && r.MatchMask != 0) : null;
+                view.Refresh();
+            }
+        }
+
+        private void ApplySearchToAll()
+        {
+            var q = SearchQuery();
+            foreach (var ar in _allRows)
+            {
+                var row = ar.Source;
+                row.ClearMatch();
+                if (q.Length == 0) continue;
+                for (int c = 0; c < row.Cells.Length; c++)
+                    if (FuzzyMatch(row.Cells[c], q)) row.SetMatch(c, true);
+            }
+
+            var view = CollectionViewSource.GetDefaultView(_allRows);
+            if (view != null)
+            {
+                bool filter = q.Length > 0 && TableFilterCheck != null && TableFilterCheck.IsChecked == true;
+                view.Filter = filter ? (Predicate<object>)(o => o is AllRow a && a.ViewMatch != 0) : null;
+                view.Refresh();
+            }
+        }
+
+        /// <summary>Нечёткое сравнение: символы запроса должны встречаться в тексте по порядку
+        /// (без учёта регистра). Пустой запрос совпадает со всем.</summary>
+        private static bool FuzzyMatch(string text, string query)
+        {
+            if (string.IsNullOrEmpty(query)) return true;
+            if (string.IsNullOrEmpty(text)) return false;
+            int qi = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (char.ToLowerInvariant(text[i]) == char.ToLowerInvariant(query[qi]))
+                {
+                    qi++;
+                    if (qi == query.Length) return true;
+                }
+            }
+            return false;
+        }
+
+        // ------------------------------------------------------------------ Отмена / возврат
+
+        private WindowSnapshot CaptureAll()
+        {
+            var snap = new WindowSnapshot();
+            foreach (var entry in _entries.Values)
+            {
+                var es = new EntryState { Key = entry.Key };
+                foreach (var row in entry.Rows)
+                    es.Rows.Add(new RowState
+                    {
+                        Cells = row.Cells.ToArray(),
+                        Source = row.SourceIndex,
+                        Bold = row.BoldMask,
+                        Deleted = row.IsDeleted
+                    });
+                snap.Entries.Add(es);
+            }
+            return snap;
+        }
+
+        private void ApplyWindowSnapshot(WindowSnapshot snap)
+        {
+            if (snap == null) return;
+            foreach (var es in snap.Entries)
+            {
+                if (!_entries.TryGetValue(es.Key, out var entry)) continue;
+                entry.Rows.Clear();
+                foreach (var rs in es.Rows)
+                    entry.Rows.Add(new SnapshotRow(rs.Cells)
+                    {
+                        Owner = entry,
+                        SourceIndex = rs.Source,
+                        BoldMask = rs.Bold,
+                        IsDeleted = rs.Deleted
+                    });
+                entry.Dirty = true;
+                entry.RecomputeChanged();
+                SaveEntry(entry);
+            }
+            if (IsAllView) RebuildAllView();
+            UpdateUndoUi();
+            UpdateRowUi();
+        }
+
+        private static bool SnapshotsDiffer(WindowSnapshot a, WindowSnapshot b)
+        {
+            if (a == null || b == null) return true;
+            if (a.Entries.Count != b.Entries.Count) return true;
+            for (int i = 0; i < a.Entries.Count; i++)
+            {
+                var ea = a.Entries[i];
+                var eb = b.Entries[i];
+                if (ea.Key != eb.Key || ea.Rows.Count != eb.Rows.Count) return true;
+                for (int r = 0; r < ea.Rows.Count; r++)
+                {
+                    var ra = ea.Rows[r];
+                    var rb = eb.Rows[r];
+                    if (ra.Source != rb.Source || ra.Bold != rb.Bold || ra.Deleted != rb.Deleted) return true;
+                    if (ra.Cells.Length != rb.Cells.Length) return true;
+                    for (int c = 0; c < ra.Cells.Length; c++)
+                        if (!string.Equals(ra.Cells[c], rb.Cells[c], StringComparison.Ordinal)) return true;
+                }
+            }
+            return false;
+        }
+
+        private void PushUndo(WindowSnapshot snap)
+        {
+            if (snap == null) return;
+            _undo.Add(snap);
+            while (_undo.Count > UndoLimit) _undo.RemoveAt(0);
+            _redo.Clear();
+        }
+
+        private void UpdateUndoUi()
+        {
+            if (UndoBtn != null) UndoBtn.IsEnabled = _undo.Count > 0;
+            if (RedoBtn != null) RedoBtn.IsEnabled = _redo.Count > 0;
+        }
+
+        private void UpdateRowUi()
+        {
+            bool all = IsAllView;
+            bool hasTable = all ? _allRows.Count > 0 : _currentEntry != null;
+            if (AddRowBtn != null) AddRowBtn.IsEnabled = all ? _allRows.Count > 0 : _currentEntry != null;
+            if (DelRowBtn != null) DelRowBtn.IsEnabled = hasTable;
+            if (EmptyHint != null)
+            {
+                EmptyHint.Text = _currentEntry != null
+                    ? "В таблице нет строк. Добавьте строку кнопкой «Добавить строку» (Insert)."
+                    : "Выберите спецификацию слева.";
+                EmptyHint.Visibility = !all && _currentEntry != null && _currentEntry.Rows.Count == 0
+                    ? Visibility.Visible : Visibility.Collapsed;
+            }
+            if (GridTable != null)
+                GridTable.Visibility = (!all && _currentEntry != null && _currentEntry.Rows.Count > 0)
+                    ? Visibility.Visible : Visibility.Collapsed;
+            if (AllTable != null)
+                AllTable.Visibility = all && _allRows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (AllEmptyHint != null)
+                AllEmptyHint.Visibility = all && _allRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void OnUndo(object sender, RoutedEventArgs e) { DoUndo(); }
+
+        private void OnRedo(object sender, RoutedEventArgs e) { DoRedo(); }
+
+        private void DoUndo()
+        {
+            if (_undo.Count == 0) return;
+            _redo.Add(CaptureAll());
+            var snap = _undo[_undo.Count - 1];
+            _undo.RemoveAt(_undo.Count - 1);
+            ApplyWindowSnapshot(snap);
+            PrintStatus.Text = "Действие отменено (Ctrl+Z).";
+        }
+
+        private void DoRedo()
+        {
+            if (_redo.Count == 0) return;
+            _undo.Add(CaptureAll());
+            var snap = _redo[_redo.Count - 1];
+            _redo.RemoveAt(_redo.Count - 1);
+            ApplyWindowSnapshot(snap);
+            PrintStatus.Text = "Действие возвращено (Ctrl+Y).";
+        }
+
+        private void OnReset(object sender, RoutedEventArgs e)
+        {
+            if (IsAllView) return;
+            var entry = _currentEntry;
+            if (entry == null) return;
+
+            if (entry.IsFree)
+            {
+                if (entry.Rows.Count == 0) return;
+                var rf = MessageBox.Show(this,
+                    "Очистить свободную спецификацию?\n\nВсе введённые строки будут удалены, заголовки колонок останутся.",
+                    "Снимок спецификаций",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+                if (rf != MessageBoxResult.Yes) return;
+                PushUndo(CaptureAll());
+                entry.Rows.Clear();
+                entry.Dirty = true;
+                entry.RecomputeChanged();
+                SaveEntry(entry);
+                PrintStatus.Text = "Свободная спецификация очищена.";
+                UpdateRowUi();
                 return;
             }
-            if (_dirty)
+
+            if (entry.ModelRows == null) return;
+            var r = MessageBox.Show(this,
+                "Вернуть спецификацию к виду из модели?\n\nВсе правки этой спецификации будут сброшены.",
+                "Снимок спецификаций",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (r != MessageBoxResult.Yes) return;
+
+            PushUndo(CaptureAll());
+            entry.Headers = new List<string>(entry.ModelHeaders);
+            entry.Rows.Clear();
+            for (int i = 0; i < entry.ModelRows.Count; i++)
+                entry.Rows.Add(new SnapshotRow((string[])entry.ModelRows[i].Clone())
+                {
+                    Owner = entry,
+                    SourceIndex = i
+                });
+            entry.Dirty = false;
+            entry.RecomputeChanged();
+            ScheduleSnapshotsFile.DeleteEntry(_docKey, entry.ScheduleId, entry.SheetId, entry.SegmentIndex);
+            BuildSheetColumns(entry);
+            ApplySearchToSheet();
+            UpdateRowUi();
+            UpdateButtonsForView();
+            PrintStatus.Text = "Правки сброшены к виду из модели.";
+        }
+
+        // ------------------------------------------------------------------ Буфер обмена и автозаполнение
+
+        private void OnGridKeyDown(object sender, KeyEventArgs e)
+        {
+            if (Keyboard.FocusedElement is TextBox) return;
+            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            if (e.Key == Key.Insert) { AddRow(); e.Handled = true; return; }
+            if (e.Key == Key.Delete)
             {
-                var r = MessageBox.Show(this,
-                    "Заменить таблицу данными из модели?\n\nВнесённые правки будут потеряны.",
-                    "Снимок спецификаций",
-                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-                if (r != MessageBoxResult.Yes) return;
+                if (ctrl) DeleteRows(); else ClearSelectedCells();
+                e.Handled = true;
+                return;
             }
-            ScheduleSnapshotsFile.DeleteEntry(_docKey, _selected.ScheduleId, _table?.SheetId ?? _selected.SheetId,
-                    _table?.SegmentIndex ?? -1);
-            LoadTable(_selected);
+            if (!ctrl) return;
+            switch (e.Key)
+            {
+                case Key.C: CopySelection(); e.Handled = true; break;
+                case Key.V: PasteSelection(); e.Handled = true; break;
+                case Key.D: FillDown(); e.Handled = true; break;
+                case Key.Z: DoUndo(); e.Handled = true; break;
+                case Key.Y: DoRedo(); e.Handled = true; break;
+                case Key.B: ToggleBoldSelection(); e.Handled = true; break;
+            }
+        }
+
+        private bool GetSelectionRect(DataGrid grid, out int r0, out int c0, out int r1, out int c1)
+        {
+            r0 = c0 = int.MaxValue;
+            r1 = c1 = -1;
+            foreach (var ci in grid.SelectedCells)
+            {
+                int r = grid.Items.IndexOf(ci.Item);
+                int c = ci.Column != null ? ci.Column.DisplayIndex : -1;
+                if (r < 0 || c < 0) continue;
+                if (r < r0) r0 = r;
+                if (r > r1) r1 = r;
+                if (c < c0) c0 = c;
+                if (c > c1) c1 = c;
+            }
+            if (r1 < r0 || c1 < c0)
+            {
+                var cur = grid.CurrentCell;
+                if (cur.IsValid && cur.Column != null)
+                {
+                    int r = grid.Items.IndexOf(cur.Item);
+                    int c = cur.Column.DisplayIndex;
+                    if (r >= 0 && c >= 0) { r0 = r1 = r; c0 = c1 = c; }
+                }
+            }
+            return r0 >= 0 && r1 >= r0 && c1 >= c0;
+        }
+
+        private void CopySelection()
+        {
+            var grid = ActiveGrid;
+            int r0, c0, r1, c1;
+            if (!GetSelectionRect(grid, out r0, out c0, out r1, out c1)) return;
+            var sb = new StringBuilder();
+            for (int r = r0; r <= r1; r++)
+            {
+                var items = grid.Items;
+                if (r >= items.Count) break;
+                object item = items[r];
+                for (int c = c0; c <= c1; c++)
+                {
+                    if (c > c0) sb.Append('\t');
+                    sb.Append(CellText(item, c) ?? string.Empty);
+                }
+                sb.Append("\r\n");
+            }
+            try
+            {
+                Clipboard.SetText(sb.ToString());
+                PrintStatus.Text = "Скопировано в буфер: строк " + (r1 - r0 + 1) + " × колонок " + (c1 - c0 + 1) + ".";
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ScheduleSnapshotWindow.Copy EXCEPTION: " + ex);
+                PrintStatus.Text = "Не удалось скопировать: " + ex.Message;
+            }
+        }
+
+        private static string CellText(object item, int viewCol)
+        {
+            if (item is SnapshotRow r) return viewCol >= 0 && viewCol < r.Cells.Length ? r.Cells[viewCol] : null;
+            if (item is AllRow a) return a[viewCol];
+            return null;
+        }
+
+        private void PasteSelection()
+        {
+            var grid = ActiveGrid;
+            string text = null;
+            try { if (Clipboard.ContainsText()) text = Clipboard.GetText(); }
+            catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow.Paste read EXCEPTION: " + ex); }
+            if (string.IsNullOrEmpty(text)) return;
+
+            int r0, c0, r1, c1;
+            if (!GetSelectionRect(grid, out r0, out c0, out r1, out c1)) return;
+
+            var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n').Split('\n');
+            var undo = CaptureAll();
+            bool changed = false;
+            var touched = new HashSet<ScheduleEntry>();
+            for (int dr = 0; dr < lines.Length; dr++)
+            {
+                int r = r0 + dr;
+                if (r >= grid.Items.Count) break;
+                object item = grid.Items[r];
+                var values = lines[dr].Split('\t');
+                for (int dc = 0; dc < values.Length; dc++)
+                {
+                    int viewCol = c0 + dc;
+                    if (!CellWritable(item, viewCol)) continue;
+                    if (!string.Equals(CellText(item, viewCol), values[dc], StringComparison.Ordinal))
+                    {
+                        SetCellText(item, viewCol, values[dc]);
+                        var owner = OwnerOf(item);
+                        if (owner != null) touched.Add(owner);
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) return;
+            PushUndo(undo);
+            foreach (var e in touched) { e.Dirty = true; e.RecomputeChanged(); SaveEntry(e); }
+            if (IsAllView) RebuildAllView();
+            PrintStatus.Text = "Вставлено из буфера: строк " + lines.Length + ".";
+        }
+
+        private static bool CellWritable(object item, int viewCol)
+        {
+            if (item is SnapshotRow r) return viewCol >= 0 && viewCol < r.Cells.Length;
+            if (item is AllRow a) return a.SourceColumn(viewCol) >= 0;
+            return false;
+        }
+
+        private static void SetCellText(object item, int viewCol, string value)
+        {
+            if (item is SnapshotRow r) { if (viewCol >= 0 && viewCol < r.Cells.Length) r.Cells[viewCol] = value; }
+            else if (item is AllRow a) a[viewCol] = value;
+        }
+
+        private static ScheduleEntry OwnerOf(object item)
+        {
+            if (item is SnapshotRow r) return r.Owner;
+            if (item is AllRow a) return a.Source.Owner;
+            return null;
+        }
+
+        private void FillDown()
+        {
+            var grid = ActiveGrid;
+            int r0, c0, r1, c1;
+            if (!GetSelectionRect(grid, out r0, out c0, out r1, out c1)) return;
+            if (r1 <= r0) return;
+            var undo = CaptureAll();
+            bool changed = false;
+            var touched = new HashSet<ScheduleEntry>();
+            for (int c = c0; c <= c1; c++)
+            {
+                if (r0 >= grid.Items.Count) continue;
+                var value = CellText(grid.Items[r0], c);
+                for (int r = r0 + 1; r <= r1; r++)
+                {
+                    if (r >= grid.Items.Count) break;
+                    var item = grid.Items[r];
+                    if (!CellWritable(item, c)) continue;
+                    if (!string.Equals(CellText(item, c), value, StringComparison.Ordinal))
+                    {
+                        SetCellText(item, c, value);
+                        var owner = OwnerOf(item);
+                        if (owner != null) touched.Add(owner);
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) return;
+            PushUndo(undo);
+            foreach (var e in touched) { e.Dirty = true; e.RecomputeChanged(); SaveEntry(e); }
+            if (IsAllView) RebuildAllView();
+            PrintStatus.Text = "Значение заполнено вниз (Ctrl+D).";
+        }
+
+        /// <summary>Очищает выделенные ячейки (Delete). Работает и когда ячейка не в режиме
+        /// редактирования. Если ничего не выделено — очищает текущую ячейку.</summary>
+        private void ClearSelectedCells()
+        {
+            var grid = ActiveGrid;
+            var cells = new List<DataGridCellInfo>(grid.SelectedCells);
+            if (cells.Count == 0 && grid.CurrentCell.IsValid) cells.Add(grid.CurrentCell);
+            if (cells.Count == 0)
+            {
+                PrintStatus.Text = "Выделите ячейки для очистки (Delete).";
+                return;
+            }
+
+            var undo = CaptureAll();
+            bool changed = false;
+            var touched = new HashSet<ScheduleEntry>();
+            foreach (var ci in cells)
+            {
+                if (ci.Column == null) continue;
+                object item = ci.Item;
+                int c = ci.Column.DisplayIndex;
+                if (!CellWritable(item, c)) continue;
+                if (string.IsNullOrEmpty(CellText(item, c))) continue;
+                SetCellText(item, c, string.Empty);
+                var owner = OwnerOf(item);
+                if (owner != null) touched.Add(owner);
+                changed = true;
+            }
+            if (!changed) { PrintStatus.Text = "Нет данных для очистки (Delete)."; return; }
+            PushUndo(undo);
+            foreach (var e in touched) { e.Dirty = true; e.RecomputeChanged(); SaveEntry(e); }
+            PrintStatus.Text = "Ячейки очищены (Delete).";
+        }
+
+        // ------------------------------------------------------------------ Жирный
+
+        private void OnToggleBold(object sender, RoutedEventArgs e) { ToggleBoldSelection(); }
+
+        private void ToggleBoldSelection()
+        {
+            bool changed = false;
+            var touched = new HashSet<ScheduleEntry>();
+            if (IsAllView)
+            {
+                foreach (var ci in AllTable.SelectedCells)
+                {
+                    if (!(ci.Item is AllRow ar) || ci.Column == null) continue;
+                    int si = ar.SourceColumn(ci.Column.DisplayIndex);
+                    if (si < 0) continue;
+                    ar.Source.ToggleBold(si);
+                    touched.Add(ar.Source.Owner);
+                    changed = true;
+                }
+            }
+            else
+            {
+                if (_currentEntry == null) return;
+                foreach (var ci in GridTable.SelectedCells)
+                {
+                    if (!(ci.Item is SnapshotRow row) || ci.Column == null) continue;
+                    int c = ci.Column.DisplayIndex;
+                    if (c < 0 || c >= row.Cells.Length) continue;
+                    row.ToggleBold(c);
+                    touched.Add(row.Owner);
+                    changed = true;
+                }
+            }
+            if (!changed) { PrintStatus.Text = "Выделите ячейки и повторите (Ctrl+B)."; return; }
+            foreach (var e in touched) { e.Dirty = true; SaveEntry(e); }
+            PrintStatus.Text = "Жирный шрифт переключён для выделенных ячеек.";
+        }
+
+        // ------------------------------------------------------------------ Строки
+
+        private List<int> SelectedRowIndices(DataGrid grid)
+        {
+            var set = new SortedSet<int>();
+            foreach (var ci in grid.SelectedCells)
+            {
+                int r = grid.Items.IndexOf(ci.Item);
+                if (r >= 0) set.Add(r);
+            }
+            if (set.Count == 0)
+            {
+                var cur = grid.CurrentCell;
+                if (cur.IsValid)
+                {
+                    int r = grid.Items.IndexOf(cur.Item);
+                    if (r >= 0) set.Add(r);
+                }
+            }
+            return set.ToList();
+        }
+
+        /// <summary>Строка-источник под выделением (для «По листам» — сама строка,
+        /// для «Всё» — Source обёртки AllRow). Нужна для вставки относительно выделения.</summary>
+        private static SnapshotRow SelectedSnapshotRow(DataGrid grid)
+        {
+            foreach (var ci in grid.SelectedCells)
+            {
+                if (ci.Item is AllRow ar) return ar.Source;
+                if (ci.Item is SnapshotRow sr) return sr;
+            }
+            var cur = grid.CurrentCell;
+            if (cur.IsValid)
+            {
+                if (cur.Item is AllRow car) return car.Source;
+                if (cur.Item is SnapshotRow csr) return csr;
+            }
+            return null;
+        }
+
+        private void OnAddRow(object sender, RoutedEventArgs e) { AddRow(); }
+
+        private void AddRow()
+        {
+            var entry = ActiveEntry();
+            if (entry == null)
+            {
+                PrintStatus.Text = "Сначала выберите спецификацию.";
+                return;
+            }
+            int cols = entry.Headers.Count;
+            if (cols == 0) return;
+
+            var undo = CaptureAll();
+            int modelIndex = entry.Rows.Count;
+            if (IsAllView)
+            {
+                var selRow = SelectedSnapshotRow(AllTable);
+                if (selRow != null && ReferenceEquals(selRow.Owner, entry))
+                {
+                    int idx = entry.Rows.IndexOf(selRow);
+                    if (idx >= 0) modelIndex = idx + 1;
+                }
+            }
+            else if (GridTable.SelectedCells.Count > 0)
+            {
+                int sel = SelectedRowIndices(GridTable).DefaultIfEmpty(-1).First();
+                if (sel >= 0 && sel < entry.Rows.Count) modelIndex = sel + 1;
+            }
+
+            var row = new SnapshotRow(EmptyRow(cols)) { Owner = entry, SourceIndex = -1 };
+            entry.Rows.Insert(modelIndex, row);
+            entry.Dirty = true;
+            entry.RecomputeChanged();
+            PushUndo(undo);
+            SaveEntry(entry);
+            if (IsAllView) RebuildAllView();
+            PrintStatus.Text = "Добавлена строка (Insert).";
+            UpdateRowUi();
+            SelectRow(row);
+        }
+
+        private void OnDeleteRow(object sender, RoutedEventArgs e) { DeleteRows(); }
+
+        private void DeleteRows()
+        {
+            var grid = ActiveGrid;
+            var indices = SelectedRowIndices(grid);
+            if (indices.Count == 0)
+            {
+                PrintStatus.Text = "Выберите строку (ячейку) для удаления.";
+                return;
+            }
+
+            var undo = CaptureAll();
+            var touched = new HashSet<ScheduleEntry>();
+            int added = 0, marked = 0;
+
+            if (IsAllView)
+            {
+                foreach (var idx in indices)
+                {
+                    if (idx < 0 || idx >= _allRows.Count) continue;
+                    var source = _allRows[idx].Source;
+                    var owner = source.Owner;
+                    if (source.SourceIndex < 0) { owner.Rows.Remove(source); added++; }
+                    else { source.IsDeleted = !source.IsDeleted; marked++; }
+                    owner.Dirty = true;
+                    touched.Add(owner);
+                }
+            }
+            else
+            {
+                var entry = _currentEntry;
+                if (entry == null) return;
+                for (int i = indices.Count - 1; i >= 0; i--)
+                {
+                    int idx = indices[i];
+                    if (idx < 0 || idx >= entry.Rows.Count) continue;
+                    var row = entry.Rows[idx];
+                    if (row.SourceIndex < 0) { entry.Rows.RemoveAt(idx); added++; }
+                    else { row.IsDeleted = !row.IsDeleted; marked++; }
+                }
+                entry.Dirty = true;
+                touched.Add(entry);
+            }
+
+            foreach (var e in touched) { e.RecomputeChanged(); SaveEntry(e); }
+            PushUndo(undo);
+            if (IsAllView) RebuildAllView();
+            PrintStatus.Text = "Строки изменены: удалено/восстановлено " + marked + ", убрано добавленных " + added + " (Ctrl+Delete).";
+            UpdateRowUi();
+        }
+
+        private void SelectRow(SnapshotRow row)
+        {
+            try
+            {
+                if (IsAllView)
+                {
+                    var ar = _allRows.FirstOrDefault(a => ReferenceEquals(a.Source, row));
+                    if (ar != null)
+                    {
+                        AllTable.ScrollIntoView(ar);
+                        if (AllTable.Columns.Count > 0)
+                        {
+                            AllTable.SelectedCells.Clear();
+                            AllTable.CurrentCell = new DataGridCellInfo(ar, AllTable.Columns[0]);
+                        }
+                    }
+                    return;
+                }
+                GridTable.ScrollIntoView(row);
+                if (GridTable.Columns.Count > 0)
+                {
+                    GridTable.SelectedCells.Clear();
+                    GridTable.CurrentCell = new DataGridCellInfo(row, GridTable.Columns[0]);
+                }
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("ScheduleSnapshotWindow.SelectRow EXCEPTION: " + ex);
+            }
+        }
+
+        private static string[] EmptyRow(int cols)
+        {
+            var cells = new string[cols];
+            for (int i = 0; i < cols; i++) cells[i] = string.Empty;
+            return cells;
+        }
+
+        // ------------------------------------------------------------------ Редактирование ячеек
+
+        /// <summary>Блокирует вход в редактирование для ячеек вкладки «Всё», у которых нет
+        /// исходной колонки в спецификации (SourceColumn &lt; 0). WPF DataGrid не позволяет
+        /// сделать отдельную ячейку ReadOnly, но событие BeginningEdit можно отменить.</summary>
+        private void OnAllTableBeginningEdit(object sender, DataGridBeginningEditEventArgs e)
+        {
+            if (e.Row == null || e.Column == null) return;
+            if (!CellWritable(e.Row.Item, e.Column.DisplayIndex)) e.Cancel = true;
         }
 
         private void OnCellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
@@ -1015,29 +1864,31 @@ namespace GrdRevit.Ui
                 _pendingUndoSnapshot = null;
                 return;
             }
-            _dirty = true;
+            object item = e.Row != null ? e.Row.Item : null;
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 var snap = _pendingUndoSnapshot;
                 _pendingUndoSnapshot = null;
-                if (snap != null && SnapshotsDiffer(snap, CurrentSnapshot()))
+                if (snap != null && SnapshotsDiffer(snap, CaptureAll()))
                     PushUndo(snap);
-                RecomputeChanged();
+                var owner = OwnerOf(e.Row.Item);
+                if (owner != null)
+                {
+                    owner.Dirty = true;
+                    owner.RecomputeChanged();
+                    SaveEntry(owner);
+                }
                 UpdateUndoUi();
-                SaveCurrentEdits();
                 PrintStatus.Text = "Изменено. Правки сохраняются автоматически (Ctrl+Z — отменить).";
             }));
         }
 
         private void GridTable_PreparingCellForEdit(object sender, DataGridPreparingCellForEditEventArgs e)
         {
-            _pendingUndoSnapshot = CurrentSnapshot();
+            _pendingUndoSnapshot = CaptureAll();
             var tb = e.EditingElement as TextBox;
             if (tb == null) return;
             tb.Focus();
-            // Если редактирование начато вводом символа, текст ячейки не выделяем: иначе
-            // первый введённый символ оказывается выделен и следующий затирает его.
-            // Выделение оставляем только для F2/двойного щелчка, где важен ввод «поверх».
             if (e.EditingEventArgs is TextCompositionEventArgs)
             {
                 tb.CaretIndex = tb.Text.Length;
@@ -1046,13 +1897,81 @@ namespace GrdRevit.Ui
             tb.SelectAll();
         }
 
+        // ------------------------------------------------------------------ Кнопки печати/экспорта
+
+        private void OnRefresh(object sender, RoutedEventArgs e)
+        {
+            if (IsAllView || _selected == null) return;
+            var entry = _currentEntry;
+            if (entry != null && entry.IsFree)
+            {
+                _entries.Remove(entry.Key);
+                _currentEntry = null;
+                LoadSheetEntry(_selected);
+                return;
+            }
+            if (entry != null && entry.Dirty)
+            {
+                var r = MessageBox.Show(this,
+                    "Заменить таблицу данными из модели?\n\nВнесённые правки будут потеряны.",
+                    "Снимок спецификаций",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if (r != MessageBoxResult.Yes) return;
+            }
+            if (entry != null)
+            {
+                ScheduleSnapshotsFile.DeleteEntry(_docKey, entry.ScheduleId, entry.SheetId, entry.SegmentIndex);
+                _entries.Remove(entry.Key);
+                _currentEntry = null;
+            }
+            LoadSheetEntry(_selected);
+        }
+
+        private List<string> ActiveHeaders()
+        {
+            if (IsAllView) return new List<string>(_allHeaders);
+            return _currentEntry != null ? new List<string>(_currentEntry.Headers) : new List<string>();
+        }
+
+        private List<string[]> ActiveExportRows(out List<long> rowBold)
+        {
+            var rows = new List<string[]>();
+            rowBold = new List<long>();
+            if (IsAllView)
+            {
+                foreach (var ar in _allRows)
+                {
+                    if (ar.IsDeleted) continue;
+                    rows.Add(ar.ToUnionArray());
+                    rowBold.Add(ar.ViewBold);
+                }
+            }
+            else if (_currentEntry != null)
+            {
+                foreach (var r in _currentEntry.Rows)
+                {
+                    if (r.IsDeleted) continue;
+                    rows.Add(r.Cells.ToArray());
+                    rowBold.Add(r.BoldMask);
+                }
+            }
+            return rows;
+        }
+
         private void OnPrint(object sender, RoutedEventArgs e)
         {
-            if (_table == null || _rows.Count == 0)
+            var headers = ActiveHeaders();
+            List<long> rowBold;
+            var rows = ActiveExportRows(out rowBold);
+            if (headers.Count == 0 || rows.Count == 0)
             {
                 PrintStatus.Text = "Нет данных для печати.";
                 return;
             }
+
+            string name = IsAllView ? "Избранные спецификации" : _currentEntry.ScheduleName;
+            double w = IsAllView ? 0 : _currentEntry.SheetWidthMm;
+            double h = IsAllView ? 0 : _currentEntry.SheetHeightMm;
 
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
@@ -1060,28 +1979,22 @@ namespace GrdRevit.Ui
                 Filter = "PDF (*.pdf)|*.pdf",
                 DefaultExt = ".pdf",
                 AddExtension = true,
-                FileName = SafeFileName(_table.ScheduleName) + ".pdf",
+                FileName = SafeFileName(name) + ".pdf",
                 OverwritePrompt = true
             };
             var dirs = RevitContext.Settings.ScheduleSnapPdfDir;
             dlg.InitialDirectory = !string.IsNullOrEmpty(dirs) && Directory.Exists(dirs)
                 ? dirs
                 : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
             if (dlg.ShowDialog() != true) return;
             var path = dlg.FileName;
 
             try
             {
                 PrintStatus.Text = "Формирование PDF…";
-                var headers = GridTable.Columns.Select(c => ((DataGridTextColumn)c).Header?.ToString() ?? string.Empty).ToList();
-                var rows = _rows.Select(row => row.Cells.ToArray()).ToList();
-                SchedulePdfRenderer.Write(path, _table.ScheduleName, headers, rows,
-                                          _table.SheetWidthMm, _table.SheetHeightMm);
-
+                SchedulePdfRenderer.Write(path, name, headers, rows, w, h, rowBold);
                 RevitContext.Settings.ScheduleSnapPdfDir = Path.GetDirectoryName(path) ?? string.Empty;
                 try { RevitContext.SaveSettings(); } catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow.SaveSettings EXCEPTION " + ex); }
-
                 PrintStatus.Text = "PDF сохранён: " + path;
                 try { System.Diagnostics.Process.Start(path); }
                 catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow: открыть PDF EXCEPTION " + ex); }
@@ -1095,12 +2008,11 @@ namespace GrdRevit.Ui
             }
         }
 
-        /// <summary>Печать листа (рамка/штамп, форма ГОСТ) с текущей отредактированной таблицей.
-        /// Revit во временной транзакции убирает исходную спецификацию, рисует нашу таблицу,
-        /// экспортирует лист в PDF и откатывает изменения — модель остаётся неизменной.</summary>
         private void OnPrintSheet(object sender, RoutedEventArgs e)
         {
-            if (_selected == null || _table == null || _rows.Count == 0)
+            if (IsAllView) return;
+            var entry = _currentEntry;
+            if (_selected == null || entry == null || entry.Rows.Count == 0)
             {
                 PrintStatus.Text = "Нет данных для печати.";
                 return;
@@ -1112,14 +2024,13 @@ namespace GrdRevit.Ui
                 Filter = "PDF (*.pdf)|*.pdf",
                 DefaultExt = ".pdf",
                 AddExtension = true,
-                FileName = SafeFileName(_selected.SheetNumber + " " + _table.ScheduleName) + ".pdf",
+                FileName = SafeFileName(_selected.SheetNumber + " " + entry.ScheduleName) + ".pdf",
                 OverwritePrompt = true
             };
             var dirs = RevitContext.Settings.ScheduleSnapPdfDir;
             dlg.InitialDirectory = !string.IsNullOrEmpty(dirs) && Directory.Exists(dirs)
                 ? dirs
                 : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
             if (dlg.ShowDialog() != true) return;
             var path = dlg.FileName;
 
@@ -1136,14 +2047,14 @@ namespace GrdRevit.Ui
                 SheetPrintBtn.IsEnabled = false;
                 PrintBtn.IsEnabled = false;
                 PrintStatus.Text = "Формирование листа в Revit…";
-                var headers = GridTable.Columns
-                    .Select(c => ((DataGridTextColumn)c).Header?.ToString() ?? string.Empty).ToList();
-                var rows = _rows.Select(row => row.Cells.ToArray()).ToList();
+                var headers = new List<string>(entry.Headers);
+                List<long> rowBold;
+                var rows = ActiveExportRows(out rowBold);
 
-                handler.QueuePrintEdited(_selected.SheetId, _selected.ScheduleId, headers, rows, path, _isFree, res =>
+                handler.QueuePrintEdited(entry.SheetId, entry.ScheduleId, headers, rows, rowBold, path, entry.IsFree, res =>
                 {
-                    SheetPrintBtn.IsEnabled = _selected != null;
-                    PrintBtn.IsEnabled = _rows.Count > 0;
+                    SheetPrintBtn.IsEnabled = _selected != null && _currentEntry != null;
+                    PrintBtn.IsEnabled = _currentEntry != null && _currentEntry.Rows.Count > 0;
                     if (!string.IsNullOrEmpty(res.Error))
                     {
                         PrintStatus.Text = res.Error;
@@ -1167,9 +2078,6 @@ namespace GrdRevit.Ui
             }
         }
 
-        /// <summary>Печать всех отмеченных листов (форма ГОСТ) в один PDF-файл: для каждого листа
-        /// берётся его отредактированный снимок спецификации (или данные модели), затем все листы
-        /// экспортируются вместе.</summary>
         private void OnPrintSelected(object sender, RoutedEventArgs e)
         {
             var items = CheckedItems();
@@ -1200,13 +2108,12 @@ namespace GrdRevit.Ui
             dlg.InitialDirectory = !string.IsNullOrEmpty(dirs) && Directory.Exists(dirs)
                 ? dirs
                 : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
             if (dlg.ShowDialog() != true) return;
             var path = dlg.FileName;
 
             try
             {
-                SaveCurrentEdits();
+                SaveAllDirty();
                 MultiPrintBtn.IsEnabled = false;
                 PrintBtn.IsEnabled = false;
                 SheetPrintBtn.IsEnabled = false;
@@ -1215,8 +2122,8 @@ namespace GrdRevit.Ui
                 handler.QueuePrintMany(items, path, res =>
                 {
                     UpdateCheckedUi();
-                    PrintBtn.IsEnabled = _rows.Count > 0;
-                    SheetPrintBtn.IsEnabled = _selected != null;
+                    PrintBtn.IsEnabled = _currentEntry != null && _currentEntry.Rows.Count > 0;
+                    SheetPrintBtn.IsEnabled = _selected != null && _currentEntry != null;
                     if (!string.IsNullOrEmpty(res.Error))
                     {
                         PrintStatus.Text = res.Error;
@@ -1235,15 +2142,11 @@ namespace GrdRevit.Ui
             catch (Exception ex)
             {
                 UpdateCheckedUi();
-                PrintBtn.IsEnabled = _rows.Count > 0;
-                SheetPrintBtn.IsEnabled = _selected != null;
                 GrdLog.Log("ScheduleSnapshotWindow.OnPrintSelected EXCEPTION: " + ex);
                 PrintStatus.Text = "Не удалось запустить печать: " + ex.Message;
             }
         }
 
-        /// <summary>Экспорт всех отмеченных листов в один файл Excel: каждая спецификация —
-        /// отдельный лист книги, данные — с учётом сохранённых правок. Модель не изменяется.</summary>
         private void OnExportExcel(object sender, RoutedEventArgs e)
         {
             var items = CheckedItems();
@@ -1274,17 +2177,19 @@ namespace GrdRevit.Ui
             dlg.InitialDirectory = !string.IsNullOrEmpty(dirs) && Directory.Exists(dirs)
                 ? dirs
                 : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
             if (dlg.ShowDialog() != true) return;
             var path = dlg.FileName;
 
+            bool oneSheet = ExcelOneSheetCheck != null && ExcelOneSheetCheck.IsChecked == true;
+
             try
             {
-                SaveCurrentEdits();
+                SaveAllDirty();
                 ExportExcelBtn.IsEnabled = false;
-                PrintStatus.Text = "Экспорт " + items.Count + " спецификаций в Excel…";
+                PrintStatus.Text = "Экспорт " + items.Count + " спецификаций в Excel" +
+                                   (oneSheet ? " (один лист)…" : "…");
 
-                handler.QueueExportExcel(items, path, res =>
+                handler.QueueExportExcel(items, path, oneSheet, res =>
                 {
                     UpdateCheckedUi();
                     if (!string.IsNullOrEmpty(res.Error))
@@ -1310,43 +2215,44 @@ namespace GrdRevit.Ui
             }
         }
 
-        /// <summary>Экспорт текущей (отредактированной) таблицы снимка в CSV для Excel.</summary>
         private void OnExportCsv(object sender, RoutedEventArgs e)
         {
-            if (_table == null || _rows.Count == 0)
+            var headers = ActiveHeaders();
+            List<long> ignored;
+            var rows = ActiveExportRows(out ignored);
+            if (headers.Count == 0 || rows.Count == 0)
             {
                 PrintStatus.Text = "Нет данных для экспорта.";
                 return;
             }
 
+            string name = IsAllView ? "Избранные спецификации" : _currentEntry.ScheduleName;
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 Title = "Экспорт таблицы снимка в CSV",
                 Filter = "CSV (*.csv)|*.csv",
                 DefaultExt = ".csv",
                 AddExtension = true,
-                FileName = SafeFileName(_table.ScheduleName) + ".csv",
+                FileName = SafeFileName(name) + ".csv",
                 OverwritePrompt = true
             };
             var dirs = RevitContext.Settings.ScheduleSnapPdfDir;
             dlg.InitialDirectory = !string.IsNullOrEmpty(dirs) && Directory.Exists(dirs)
                 ? dirs
                 : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
             if (dlg.ShowDialog() != true) return;
             var path = dlg.FileName;
 
             try
             {
                 var sb = new StringBuilder();
-                sb.AppendLine(string.Join(";", _table.Headers.Select(Csv)));
-                foreach (var row in _rows)
-                    sb.AppendLine(string.Join(";", row.Cells.ToArray().Select(Csv)));
+                sb.AppendLine(string.Join(";", headers.Select(Csv)));
+                foreach (var row in rows)
+                    sb.AppendLine(string.Join(";", row.Select(Csv)));
                 File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
 
                 RevitContext.Settings.ScheduleSnapPdfDir = Path.GetDirectoryName(path) ?? string.Empty;
                 try { RevitContext.SaveSettings(); } catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow.SaveSettings EXCEPTION " + ex); }
-
                 PrintStatus.Text = "CSV сохранён: " + path;
                 try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + path + "\""); }
                 catch (Exception ex) { GrdLog.Log("ScheduleSnapshotWindow: показать CSV EXCEPTION " + ex); }
@@ -1369,7 +2275,8 @@ namespace GrdRevit.Ui
             return value;
         }
 
-        /// <summary>Создание свободной спецификации: диалог выбора образца, затем запрос к Revit.</summary>
+        // ------------------------------------------------------------------ Свободная спецификация
+
         private void OnCreateFree(object sender, RoutedEventArgs e)
         {
             var templates = _master.Where(x => !x.IsFree).ToList();
@@ -1424,7 +2331,6 @@ namespace GrdRevit.Ui
             }
         }
 
-        /// <summary>После перестройки списка выбрать только что созданную спецификацию.</summary>
         private void SelectPending()
         {
             if (_pendingSelectScheduleId == 0) return;
@@ -1435,7 +2341,7 @@ namespace GrdRevit.Ui
             if (it == null) return;
             if (!_visible.Contains(it) && SearchBox != null) SearchBox.Clear();
             SheetsList.SelectedItem = it;
-            if (SheetsList.SelectedItem != it) LoadTable(it);
+            if (SheetsList.SelectedItem != it) LoadSheetEntry(it);
         }
 
         private string NextSheetNumber()

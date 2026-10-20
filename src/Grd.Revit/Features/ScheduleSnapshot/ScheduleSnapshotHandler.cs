@@ -104,7 +104,7 @@ namespace GrdRevit.Revit
         private readonly object _sync = new object();
         private readonly Queue<Request> _requests = new Queue<Request>();
 
-        private enum Kind { ReadList, ReadTable, ExportFrame, PrintEdited, PrintMany, CreateFree, ExportExcel }
+        private enum Kind { ReadList, ReadTable, ExportFrame, PrintEdited, PrintMany, CreateFree, ExportExcel, ImportExcel }
 
         private sealed class Request
         {
@@ -114,6 +114,8 @@ namespace GrdRevit.Revit
             public string TargetPath;
             public List<string> Headers;
             public List<string[]> Rows;
+            public List<long> RowBold;
+            public bool OneSheet;
             public List<SheetScheduleInfo> Items;
             public bool Free;
 
@@ -121,6 +123,11 @@ namespace GrdRevit.Revit
             public long TemplateScheduleId;
             public string SheetNumber;
             public string SheetName;
+
+            /// <summary>Импорт из Excel: готовая таблица (заголовки, строки, объединения).</summary>
+            public ExcelTable ImportTable;
+            public string ScheduleName;
+            public string FontName;
 
             public Action<ScheduleSnapshotResult> Callback;
         }
@@ -168,7 +175,8 @@ namespace GrdRevit.Revit
         /// рисуется наша таблица, лист экспортируется в PDF встроенными средствами Revit, затем
         /// изменения откатываются — модель остаётся неизменной.</summary>
         public void QueuePrintEdited(long sheetId, long scheduleId, List<string> headers, List<string[]> rows,
-                                     string targetPath, bool free, Action<ScheduleSnapshotResult> callback)
+                                     List<long> rowBold, string targetPath, bool free,
+                                     Action<ScheduleSnapshotResult> callback)
         {
             lock (_sync)
                 _requests.Enqueue(new Request
@@ -178,6 +186,7 @@ namespace GrdRevit.Revit
                     ScheduleId = scheduleId,
                     Headers = headers,
                     Rows = rows,
+                    RowBold = rowBold,
                     TargetPath = targetPath,
                     Free = free,
                     Callback = callback
@@ -200,6 +209,26 @@ namespace GrdRevit.Revit
                 });
         }
 
+        /// <summary>Импорт из Excel: создание реальной спецификации Revit, в шапку которой
+        /// переносится вся таблица листа Excel (текстовые ячейки, добавленные строки и
+        /// объединения), размещение её на новом листе со штампом и запись в хранилище.</summary>
+        public void QueueImportExcel(ExcelTable table, string scheduleName, string sheetNumber,
+                                     string sheetName, string fontName,
+                                     Action<ScheduleSnapshotResult> callback)
+        {
+            lock (_sync)
+                _requests.Enqueue(new Request
+                {
+                    Kind = Kind.ImportExcel,
+                    ImportTable = table,
+                    ScheduleName = scheduleName,
+                    SheetNumber = sheetNumber,
+                    SheetName = sheetName,
+                    FontName = fontName,
+                    Callback = callback
+                });
+        }
+
         /// <summary>Пакетная печать: все переданные листы (с их отредактированными снимками
         /// спецификаций) собираются в один PDF-файл. Модель не изменяется.</summary>
         public void QueuePrintMany(List<SheetScheduleInfo> items, string targetPath,
@@ -217,7 +246,7 @@ namespace GrdRevit.Revit
 
         /// <summary>Экспорт всех выбранных листов (с их отредактированными снимками) в один
         /// файл Excel: каждая спецификация — отдельный лист книги. Модель не изменяется.</summary>
-        public void QueueExportExcel(List<SheetScheduleInfo> items, string targetPath,
+        public void QueueExportExcel(List<SheetScheduleInfo> items, string targetPath, bool oneSheet,
                                      Action<ScheduleSnapshotResult> callback)
         {
             lock (_sync)
@@ -226,6 +255,7 @@ namespace GrdRevit.Revit
                     Kind = Kind.ExportExcel,
                     Items = items,
                     TargetPath = targetPath,
+                    OneSheet = oneSheet,
                     Callback = callback
                 });
         }
@@ -259,7 +289,8 @@ namespace GrdRevit.Revit
                             break;
                         case Kind.PrintEdited:
                             res = PrintEditedSheet(app, req.SheetId, req.ScheduleId,
-                                                   req.Headers, req.Rows, req.TargetPath, req.Free);
+                                                   req.Headers, req.Rows, req.RowBold,
+                                                   req.TargetPath, req.Free);
                             break;
                         case Kind.PrintMany:
                             res = PrintEditedSheetsMany(app, req.Items, req.TargetPath);
@@ -269,7 +300,11 @@ namespace GrdRevit.Revit
                                                      req.SheetNumber, req.SheetName);
                             break;
                         case Kind.ExportExcel:
-                            res = ExportSheetsExcel(app, req.Items, req.TargetPath);
+                            res = ExportSheetsExcel(app, req.Items, req.TargetPath, req.OneSheet);
+                            break;
+                        case Kind.ImportExcel:
+                            res = CreateExcelSchedule(app, req.ImportTable, req.ScheduleName,
+                                                      req.SheetNumber, req.SheetName, req.FontName);
                             break;
                         default:
                             res = ReadTable(app, req.SheetId, req.ScheduleId);
@@ -438,6 +473,7 @@ namespace GrdRevit.Revit
         /// Всё векторное; после экспорта модель возвращается в исходное состояние.</summary>
         private static ScheduleSnapshotResult PrintEditedSheet(UIApplication app, long sheetId, long scheduleId,
                                                                List<string> headers, List<string[]> rows,
+                                                               List<long> rowBold,
                                                                string targetPath, bool isFree)
         {
             var res = new ScheduleSnapshotResult();
@@ -460,7 +496,7 @@ namespace GrdRevit.Revit
                 t1 = new Transaction(doc, "JTOOLS: временная спецификация для печати");
                 t1.Start();
 
-                var err = PrepareSheetTable(doc, sheet, scheduleId, headers, rows, viewFamilyType,
+                var err = PrepareSheetTable(doc, sheet, scheduleId, headers, rows, rowBold, viewFamilyType,
                                             created, tempTypes, restores, isFree);
                 if (err != null)
                 {
@@ -516,6 +552,7 @@ namespace GrdRevit.Revit
         /// положение запоминается в restores. Возвращает null при успехе, иначе текст ошибки.</summary>
         private static string PrepareSheetTable(Document doc, ViewSheet sheet, long scheduleId,
                                                 List<string> headers, List<string[]> rows,
+                                                List<long> rowBold,
                                                 ViewFamilyType viewFamilyType,
                                                 List<ElementId> created, List<ElementId> tempTypes,
                                                 List<SheetRestore> restores, bool isFree = false)
@@ -669,7 +706,7 @@ namespace GrdRevit.Revit
             dv.Scale = 1;
             created.Add(dv.Id);
 
-            DrawLayout(doc, dv, layout, created, tempTypes);
+            DrawLayout(doc, dv, layout, created, tempTypes, rowBold);
 
             // Вид обрезан ровно по габариту таблицы; левый верхний угол — в левом верхнем
             // углу допустимого поля листа.
@@ -750,6 +787,7 @@ namespace GrdRevit.Revit
             public long ScheduleId;
             public List<string> Headers;
             public List<string[]> Rows;
+            public List<long> RowBold;
             public bool Free;
         }
 
@@ -759,6 +797,7 @@ namespace GrdRevit.Revit
             public ViewSheet Sheet;
             public SheetScheduleInfo It;
             public ScheduleTable Table;
+            public List<long> RowBold;
         }
 
         /// <summary>Читает таблицы выбранных листов, подставляя сохранённые правки (для свободной
@@ -800,23 +839,40 @@ namespace GrdRevit.Revit
                     continue;
                 }
 
-                // Сохранённые окном правки — если набор колонок совпадает с моделью.
+                // Сохранённые окном правки — если число колонок совпадает с моделью
+                // (названия колонок могли быть переименованы пользователем).
                 // Для свободной спецификации источник — только сохранённые правки.
+                var rowBold = new List<long>();
                 try
                 {
                     var saved = ScheduleSnapshotsFile.LoadEntry(docKey, it.ScheduleId, t.SheetId, t.SegmentIndex);
                     bool free = (saved != null && saved.IsFree) || t.IsFree;
-                    if (saved != null && HeadersSame(saved.Headers, t.Headers) &&
+                    if (saved != null && saved.Headers.Count == t.Headers.Count &&
                         (free || saved.Rows.Count > 0))
                     {
                         t.Headers = saved.Headers;
-                        t.Rows = saved.Rows;
+                        // Удалённые строки показываются в окне, но не идут в печать и экспорт.
+                        var rows = new List<string[]>();
+                        for (int r = 0; r < saved.Rows.Count; r++)
+                        {
+                            bool del = r < saved.Deleted.Count && saved.Deleted[r];
+                            if (del) continue;
+                            rows.Add(saved.Rows[r]);
+                            rowBold.Add(r < saved.Bolds.Count ? saved.Bolds[r] : 0L);
+                        }
+                        t.Rows = rows;
                     }
                     t.IsFree = free;
                 }
                 catch (Exception ex) { GrdLog.Log("GatherEditedTables: правки EXCEPTION " + ex.Message); }
 
-                result.Add(new EditedTableData { Sheet = sheet, It = it, Table = t });
+                if (rowBold.Count != t.Rows.Count)
+                {
+                    rowBold.Clear();
+                    for (int r = 0; r < t.Rows.Count; r++) rowBold.Add(0L);
+                }
+
+                result.Add(new EditedTableData { Sheet = sheet, It = it, Table = t, RowBold = rowBold });
             }
             return result;
         }
@@ -824,7 +880,7 @@ namespace GrdRevit.Revit
         /// <summary>Экспорт всех выбранных листов (их отредактированные снимки спецификаций)
         /// в один файл Excel: каждая спецификация — отдельный лист книги. Модель не изменяется.</summary>
         private static ScheduleSnapshotResult ExportSheetsExcel(UIApplication app, List<SheetScheduleInfo> items,
-                                                                string targetPath)
+                                                                string targetPath, bool oneSheet)
         {
             var res = new ScheduleSnapshotResult();
             if (app?.ActiveUIDocument?.Document == null) { res.Error = "Нет активного документа Revit."; return res; }
@@ -840,14 +896,22 @@ namespace GrdRevit.Revit
 
             try
             {
-                var sheets = new List<XlsxSheet>();
-                foreach (var d in data)
-                    sheets.Add(new XlsxSheet
-                    {
-                        Name = d.Table.ScheduleName,
-                        Headers = d.Table.Headers,
-                        Rows = d.Table.Rows
-                    });
+                List<XlsxSheet> sheets;
+                if (oneSheet)
+                {
+                    sheets = new List<XlsxSheet> { BuildSingleExcelSheet(data) };
+                }
+                else
+                {
+                    sheets = new List<XlsxSheet>();
+                    foreach (var d in data)
+                        sheets.Add(new XlsxSheet
+                        {
+                            Name = d.Table.ScheduleName,
+                            Headers = d.Table.Headers,
+                            Rows = d.Table.Rows
+                        });
+                }
                 XlsxWriter.Write(targetPath, sheets);
             }
             catch (Exception ex)
@@ -859,6 +923,72 @@ namespace GrdRevit.Revit
 
             GrdLog.Log("ExportSheetsExcel: экспортировано таблиц=" + data.Count + " → " + targetPath);
             return res;
+        }
+
+        /// <summary>Объединяет все выбранные спецификации в один лист Excel. Если у всех
+        /// таблиц одинаковые заголовки — строки просто идут одна за другой; иначе столбцы
+        /// объединяются по названию (порядок — первое вхождение). Перед каждой группой
+        /// добавляется строка-разделитель с подписью листа и спецификации.</summary>
+        private static XlsxSheet BuildSingleExcelSheet(List<EditedTableData> data)
+        {
+            bool sameHeaders = true;
+            var first = data[0].Table.Headers;
+            foreach (var d in data)
+            {
+                if (!HeadersSame(first, d.Table.Headers)) { sameHeaders = false; break; }
+            }
+
+            var headers = sameHeaders ? new List<string>(first) : new List<string>();
+            var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (!sameHeaders)
+            {
+                foreach (var d in data)
+                    foreach (var h in d.Table.Headers)
+                    {
+                        var key = h ?? string.Empty;
+                        if (!indexByName.ContainsKey(key))
+                        {
+                            indexByName[key] = headers.Count;
+                            headers.Add(key);
+                        }
+                    }
+            }
+
+            var sheet = new XlsxSheet { Name = "Спецификация", Headers = headers };
+            bool firstGroup = true;
+            foreach (var d in data)
+            {
+                if (!firstGroup) sheet.Rows.Add(new string[headers.Count]);
+                var caption = new string[headers.Count];
+                if (headers.Count > 0)
+                {
+                    var it = d.It;
+                    var num = string.IsNullOrWhiteSpace(it.SheetNumber) ? "—" : it.SheetNumber;
+                    var name = string.IsNullOrWhiteSpace(it.SheetName) ? "" : " · " + it.SheetName;
+                    caption[0] = "Лист " + num + name + " — «" + d.Table.ScheduleName + "»";
+                }
+                sheet.Rows.Add(caption);
+
+                foreach (var row in d.Table.Rows)
+                {
+                    var outRow = new string[headers.Count];
+                    if (sameHeaders)
+                    {
+                        for (int c = 0; c < headers.Count && c < row.Length; c++) outRow[c] = row[c];
+                    }
+                    else
+                    {
+                        for (int c = 0; c < d.Table.Headers.Count && c < row.Length; c++)
+                        {
+                            if (indexByName.TryGetValue(d.Table.Headers[c] ?? string.Empty, out var ui))
+                                outRow[ui] = row[c];
+                        }
+                    }
+                    sheet.Rows.Add(outRow);
+                }
+                firstGroup = false;
+            }
+            return sheet;
         }
 
         /// <summary>Пакетная печать: каждый выбранный лист получает рамку и штамп ГОСТ и свою
@@ -886,6 +1016,7 @@ namespace GrdRevit.Revit
                     ScheduleId = d.It.ScheduleId,
                     Headers = d.Table.Headers,
                     Rows = d.Table.Rows,
+                    RowBold = d.RowBold,
                     Free = d.Table.IsFree
                 });
             }
@@ -905,7 +1036,7 @@ namespace GrdRevit.Revit
                 foreach (var job in jobs)
                 {
                     var err = PrepareSheetTable(doc, job.Sheet, job.ScheduleId, job.Headers, job.Rows,
-                                                viewFamilyType, created, tempTypes, restores, job.Free);
+                                                job.RowBold, viewFamilyType, created, tempTypes, restores, job.Free);
                     if (err != null) failed.Add("№" + job.Sheet.SheetNumber + ": " + err);
                 }
 
@@ -1042,7 +1173,8 @@ namespace GrdRevit.Revit
 
         /// <summary>Рисует таблицу на чертёжном виде (линии сетки + заметки).</summary>
         private static void DrawLayout(Document doc, ViewDrafting dv, TableLayout L,
-                                       List<ElementId> created, List<ElementId> tempTypes)
+                                       List<ElementId> created, List<ElementId> tempTypes,
+                                       List<long> rowBold = null)
         {
             var baseType = new FilteredElementCollector(doc).OfClass(typeof(TextNoteType))
                 .Cast<TextNoteType>().FirstOrDefault();
@@ -1051,6 +1183,12 @@ namespace GrdRevit.Revit
             try { cellType.get_Parameter(BuiltInParameter.TEXT_FONT).Set("Arial"); } catch { }
             try { cellType.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).Set(0); } catch { }
             tempTypes.Add(cellType.Id);
+
+            var cellBoldType = (TextNoteType)baseType.Duplicate("GRD_TMP_CELLB_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            cellBoldType.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(L.TextH);
+            try { cellBoldType.get_Parameter(BuiltInParameter.TEXT_FONT).Set("Arial"); } catch { }
+            try { cellBoldType.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).Set(1); } catch { }
+            tempTypes.Add(cellBoldType.Id);
 
             var headerType = (TextNoteType)baseType.Duplicate("GRD_TMP_HEAD_" + Guid.NewGuid().ToString("N").Substring(0, 6));
             headerType.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(L.TextH);
@@ -1091,10 +1229,13 @@ namespace GrdRevit.Revit
             {
                 for (int c = 0; c < n; c++)
                 {
+                    bool bold = rowBold != null && r < rowBold.Count && c < 62 &&
+                                (rowBold[r] & (1L << c)) != 0L;
+                    var noteType = bold ? cellBoldType.Id : cellType.Id;
                     double ty = y - L.PadY;
                     foreach (var line in L.RowLines[r][c])
                     {
-                        AddNote(doc, dv, new XYZ(L.ColX[c] + L.PadX, ty, 0), line, cellType.Id,
+                        AddNote(doc, dv, new XYZ(L.ColX[c] + L.PadX, ty, 0), line, noteType,
                                 L.ColW[c] - 2 * L.PadX, created);
                         ty -= L.LineH;
                     }
@@ -1495,7 +1636,590 @@ namespace GrdRevit.Revit
             return res;
         }
 
-        /// <summary>Все спецификации, размещённые на листах активного документа.</summary>
+        /// <summary>Импорт из Excel: создаёт реальную спецификацию Revit, в шапку которой
+        /// переносится вся таблица листа Excel (текстовые ячейки, добавленные строки и
+        /// объединения), размещает её на новом листе со штампом и пишет запись в хранилище.</summary>
+        private static ScheduleSnapshotResult CreateExcelSchedule(UIApplication app, ExcelTable table,
+                                                                  string scheduleName, string sheetNumber,
+                                                                  string sheetName, string fontName)
+        {
+            var res = new ScheduleSnapshotResult();
+            var doc = app?.ActiveUIDocument?.Document;
+            if (doc == null) { res.Error = "Нет активного документа Revit."; return res; }
+            if (doc.IsFamilyDocument) { res.Error = "Импорт из Excel работает только в проектном документе (RVT)."; return res; }
+            if (table == null || table.RowCount == 0 || table.ColumnCount == 0)
+            { res.Error = "Не удалось прочитать таблицу Excel (пустой диапазон)."; return res; }
+
+            res.DocKey = GetDocKey(doc);
+
+            long newScheduleId = 0, newSheetId = 0;
+            string finalName = string.Empty;
+            Transaction t = null;
+            try
+            {
+                t = new Transaction(doc, "JTOOLS: импорт из Excel");
+                t.Start();
+
+                var sched = CreateAssemblyCodeSchedule(doc);
+                if (sched == null)
+                { t.RollBack(); t = null; res.Error = "Не удалось создать спецификацию (MultiCategory)."; return res; }
+
+                try
+                {
+                    finalName = MakeUniqueScheduleName(doc,
+                        string.IsNullOrWhiteSpace(scheduleName) ? "Импорт из Excel" : scheduleName.Trim(), sched.Id);
+                    sched.Name = finalName;
+                }
+                catch (Exception ex)
+                {
+                    finalName = sched.Name ?? "Импорт из Excel";
+                    GrdLog.Log("CreateExcelSchedule: имя: " + ex.Message);
+                }
+
+                string info;
+                bool emptied = TryEmptySchedule(doc, sched, out info);
+                GrdLog.Log("CreateExcelSchedule: опустошение тела «" + finalName + "»: " +
+                           (emptied ? "да" : "нет") + " (" + info + ")");
+
+                try { sched.Definition.ShowHeaders = true; } catch { }
+
+                try
+                {
+                    EnsureAllHeaderColumnsVisible(sched, table);
+                    GrdLog.Log("CreateExcelSchedule: ensureHdr done");
+                }
+                catch (Exception ex) { GrdLog.Log("CreateExcelSchedule: ensureHdr EX: " + ex.ToString()); }
+
+                var hdrErr = WriteExcelHeader(sched, table);
+                GrdLog.Log("CreateExcelSchedule: WriteExcelHeader done, err=" + (hdrErr ?? "null"));
+                if (hdrErr != null)
+                { t.RollBack(); t = null; res.Error = hdrErr; return res; }
+
+                ApplyExcelAssemblyFilters(sched, table);
+
+                try { sched.Definition.ShowHeaders = false; } catch { }
+                try { sched.Definition.ShowTitle = true; } catch { }
+                try { if (sched.Definition.ShowGrandTotal) sched.Definition.ShowGrandTotal = false; } catch { }
+                try { ApplyTableTextType(sched, fontName); } catch (Exception ex) { GrdLog.Log("CreateExcelSchedule: font: " + ex.Message); }
+                try { ApplyColumnWidthsByGrid(sched, table); } catch (Exception ex) { GrdLog.Log("CreateExcelSchedule: gridWidths: " + ex.Message); }
+                try { ApplyRowHeightByTable(sched, table); } catch (Exception ex) { GrdLog.Log("CreateExcelSchedule: rowHeight: " + ex.Message); }
+                try { OpenScheduleView(doc, sched.Id); } catch (Exception ex) { GrdLog.Log("CreateExcelSchedule: open: " + ex.Message); }
+
+                try
+                {
+                    var td = sched.GetTableData();
+                    var hdrSec = td?.GetSectionData(SectionType.Header);
+                    var bodySec = td?.GetSectionData(SectionType.Body);
+                    int fcount = sched.Definition.GetFieldCount();
+                    GrdLog.Log("DIAG: fields=" + fcount +
+                               " hdrCols=" + (hdrSec != null ? hdrSec.NumberOfColumns.ToString() : "null") +
+                               " hdrRows=" + (hdrSec != null ? hdrSec.NumberOfRows.ToString() : "null") +
+                               " bodyCols=" + (bodySec != null ? bodySec.NumberOfColumns.ToString() : "null"));
+                    if (hdrSec != null)
+                    {
+                        for (int c = hdrSec.FirstColumnNumber; c <= hdrSec.LastColumnNumber; c++)
+                        {
+                            try { GrdLog.Log("DIAG hdr col " + c + " width=" + hdrSec.GetColumnWidth(c).ToString("F4")); } catch { }
+                        }
+                    }
+                }
+                catch (Exception ex) { GrdLog.Log("DIAG EX: " + ex.Message); }
+
+                t.Commit();
+                t = null;
+
+                newScheduleId = sched.Id.Value;
+                newSheetId = 0;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("CreateExcelSchedule EXCEPTION: " + ex);
+                try { t?.RollBack(); } catch { }
+                res.Error = "Не удалось импортировать таблицу из Excel: " + ex.Message;
+                return res;
+            }
+
+            try
+            {
+                var finalSchedule = doc.GetElement(new ElementId(newScheduleId)) as ViewSchedule;
+                var entry = new SerializedSchedule
+                {
+                    ScheduleId = newScheduleId,
+                    ScheduleName = finalSchedule?.Name ?? finalName,
+                    IsFree = true,
+                    TemplateScheduleId = 0,
+                    SheetId = newSheetId,
+                    SegmentIndex = -1
+                };
+                if (table.Headers != null) entry.Headers.AddRange(table.Headers);
+                if (table.Rows != null)
+                    foreach (var row in table.Rows)
+                        entry.Rows.Add(row ?? new string[0]);
+                ScheduleSnapshotsFile.SaveEntry(res.DocKey, entry);
+                res.NewScheduleId = newScheduleId;
+                res.NewSheetId = newSheetId;
+                GrdLog.Log("CreateExcelSchedule: создана «" + entry.ScheduleName + "» id=" + newScheduleId +
+                           " лист=" + newSheetId + " строк=" + table.RowCount + " колонок=" + table.ColumnCount);
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("CreateExcelSchedule: сохранение записи EXCEPTION: " + ex.Message);
+                res.Error = "Спецификация создана, но не сохранилась в хранилище: " + ex.Message;
+            }
+            return res;
+        }
+
+        /// <summary>Создаёт multi-category спецификацию (categoryId = InvalidElementId)
+        /// и настраивает единственную колонку Assembly Code.</summary>
+        private static ViewSchedule CreateAssemblyCodeSchedule(Document doc)
+        {
+            try
+            {
+                ViewSchedule s = null;
+                try { s = ViewSchedule.CreateSchedule(doc, ElementId.InvalidElementId); }
+                catch (Exception ex) { GrdLog.Log("CreateAssemblyCodeSchedule: multi-category: " + ex.Message); }
+                if (s == null)
+                {
+                    var id = new ElementId(BuiltInCategory.OST_GenericModel);
+                    if (ViewSchedule.IsValidCategoryForSchedule(id))
+                        try { s = ViewSchedule.CreateSchedule(doc, id); } catch { }
+                }
+                if (s == null) return null;
+                ConfigureScheduleAssemblyCodeOnly(s);
+                return s;
+            }
+            catch (Exception ex)
+            {
+                GrdLog.Log("CreateAssemblyCodeSchedule: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static void ConfigureScheduleAssemblyCodeOnly(ViewSchedule s)
+        {
+            var def = s.Definition;
+            if (def == null) return;
+            try { def.ClearFilters(); } catch { }
+            try { def.ClearFields(); } catch { }
+            try { def.ShowTitle = true; } catch { }
+            try { def.ShowHeaders = false; } catch { }
+            try { def.ShowGrandTotal = false; } catch { }
+            var doc = s.Document;
+            var bp = new ElementId(BuiltInParameter.SHEET_ASSEMBLY_ASSEMBLY_CODE);
+            foreach (var sf in def.GetSchedulableFields())
+            {
+                try
+                {
+                    var pid = sf.ParameterId;
+                    if (pid == bp) { def.AddField(sf); break; }
+                    var pn = sf.GetName(doc);
+                    if (pn != null && pn.IndexOf("Assembly Code", StringComparison.OrdinalIgnoreCase) >= 0)
+                    { def.AddField(sf); break; }
+                }
+                catch { }
+            }
+        }
+
+        private static void ConfigureScheduleFields(ViewSchedule s, int columnCount)
+        {
+            var def = s.Definition;
+            if (def == null) return;
+
+                try { def.ShowTitle = true; } catch { }
+            try { if (def.ShowHeaders == false) def.ShowHeaders = true; } catch { }
+            try { def.ShowGridLines = true; } catch { }
+            try { def.ShowGrandTotal = false; } catch { }
+            try { def.ShowGrandTotalTitle = false; } catch { }
+            try { def.ShowGrandTotalCount = false; } catch { }
+
+            var schedFields = def.GetSchedulableFields();
+            if (schedFields == null) return;
+
+            def.ClearFields();
+            int added = 0;
+            foreach (var sf in schedFields)
+            {
+                if (added >= columnCount) break;
+                try
+                {
+                    var f = def.AddField(sf);
+                    if (f != null) added++;
+                }
+                catch (Exception ex) { GrdLog.Log("ConfigureScheduleFields: AddField: " + ex.Message); }
+            }
+            GrdLog.Log("ConfigureScheduleFields: колонок " + added + " из " + columnCount);
+        }
+
+        /// <summary>Переносит всю таблицу Excel (заголовок, строки, объединения) в шапку
+        /// спецификации свободным текстом. Возвращает null при успехе, иначе текст ошибки.</summary>
+        private static string WriteExcelHeader(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                GrdLog.Log("WriteExcelHeader: table rows=" + table.Rows.Count + " cols=" + table.ColumnCount + " merges=" + table.Merges.Count + " hasHeaders=" + (table.Headers != null && table.Headers.Count > 0));
+                var td = sched.GetTableData();
+                GrdLog.Log("WriteExcelHeader: td=" + (td==null?"null":"ok"));
+                var header = td?.GetSectionData(SectionType.Header);
+                if (header == null)
+                {
+                    GrdLog.Log("WriteExcelHeader: SectionType.Header null, trying SectionType.Body/None");
+                    header = td?.GetSectionData(SectionType.Body);
+                    if (header == null) header = td?.GetSectionData(SectionType.None);
+                }
+                if (header == null) return "У спецификации нет секции шапки.";
+                GrdLog.Log("WriteExcelHeader: rows=" + header.NumberOfRows + " cols=" + header.NumberOfColumns);
+
+                int cols = table.ColumnCount;
+                bool hasHeaderRow = table.Headers != null && table.Headers.Count > 0;
+                int rows = (hasHeaderRow ? 1 : 0) + table.Rows.Count;
+                if (rows <= 0 || cols <= 0) return "Таблица Excel пуста.";
+
+                if (header.NumberOfColumns < cols)
+                {
+                    try { header.NumberOfColumns = cols; GrdLog.Log("WriteExcelHeader: set cols=" + header.NumberOfColumns); }
+                    catch (Exception ex) { GrdLog.Log("WriteExcelHeader: колонки: " + ex.Message); }
+                }
+
+                for (int i = header.NumberOfRows; i < rows; i++)
+                {
+                    try
+                    {
+                        if (!header.CanInsertRow(i)) break;
+                        header.InsertRow(i);
+                        GrdLog.Log("WriteExcelHeader: InsertRow at=" + i);
+                    }
+                    catch (Exception ex) { GrdLog.Log("WriteExcelHeader: InsertRow: " + ex.Message); break; }
+                }
+                while (header.NumberOfRows > rows)
+                {
+                    int last = header.LastRowNumber;
+                    try
+                    {
+                        if (!header.CanRemoveRow(last)) break;
+                        header.RemoveRow(last);
+                    }
+                    catch (Exception ex) { GrdLog.Log("WriteExcelHeader: RemoveRow: " + ex.Message); break; }
+                }
+
+                int r0 = header.FirstRowNumber;
+                int c0 = header.FirstColumnNumber;
+                int written = 0;
+                int r = 0;
+
+                if (hasHeaderRow)
+                {
+                    for (int c = 0; c < cols; c++)
+                    {
+                        try
+                        {
+                            var v = table.Headers[c] ?? string.Empty;
+                            header.SetCellText(r0 + r, c0 + c, v);
+                            GrdLog.Log("WriteExcelHeader: H[" + r + "," + c + "]='" + v + "'");
+                            written++;
+                        }
+                        catch (Exception ex) { GrdLog.Log("WriteExcelHeader: текст шапки: " + ex.Message); }
+                    }
+                    r++;
+                }
+
+                for (int i = 0; i < table.Rows.Count; i++, r++)
+                {
+                    var line = table.Rows[i];
+                    for (int c = 0; c < cols; c++)
+                    {
+                        try
+                        {
+                            var v = c < line.Length ? (line[c] ?? string.Empty) : string.Empty;
+                            header.SetCellText(r0 + r, c0 + c, v);
+                            GrdLog.Log("WriteExcelHeader: R[" + i + "," + c + "]='" + v + "'");
+                            written++;
+                        }
+                        catch (Exception ex) { GrdLog.Log("WriteExcelHeader: текст: " + ex.Message); }
+                    }
+                }
+
+                if (written == 0)
+                    return "Не удалось записать таблицу в шапку спецификации (API ограничил доступ к ячейкам).";
+
+                GrdLog.Log("WriteExcelHeader: written=" + written + " rowsNow=" + header.NumberOfRows);
+
+                if (table.Merges != null)
+                {
+                    foreach (var m in table.Merges)
+                    {
+                        try
+                        {
+                            header.MergeCells(new TableMergedCell(r0 + m.Top, c0 + m.Left, r0 + m.Bottom, c0 + m.Right));
+                        }
+                        catch (Exception ex) { GrdLog.Log("WriteExcelHeader: объединение: " + ex.Message); }
+                    }
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return "Не удалось перенести таблицу в шапку спецификации: " + ex.Message;
+            }
+        }
+
+        /// <summary>Ставит колонкам шапки/определения разумные ширины, чтобы при размещении
+        /// на листе не схлопывались в одну колонку (особенно для одноколоночной/смешанной таблицы).</summary>
+        private static void AdjustHeaderColumnWidths(ViewSchedule sched, int cols)
+        {
+            try
+            {
+                var td = sched.GetTableData();
+                if (td == null) return;
+                var header = td.GetSectionData(SectionType.Header);
+                if (header == null) return;
+                double w = 150.0 / 304.8;
+                for (int c = header.FirstColumnNumber; c < header.FirstColumnNumber + cols; c++)
+                {
+                    try { header.SetColumnWidth(c, w); } catch { }
+                }
+            }
+            catch (Exception ex) { GrdLog.Log("AdjustHeaderColumnWidths: " + ex.Message); }
+        }
+
+        /// <summary>Первый доступный тип основной надписи (штампа) в проекте.</summary>
+        private static ElementId GetAnyTitleBlockTypeId(Document doc)
+        {
+            try
+            {
+                long tbCat = (long)BuiltInCategory.OST_TitleBlocks;
+                var sym = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                    .FirstOrDefault(fs => fs.Category != null && fs.Category.Id.Value == tbCat);
+                if (sym != null) return sym.Id;
+            }
+            catch (Exception ex) { GrdLog.Log("GetAnyTitleBlockTypeId: " + ex.Message); }
+            return ElementId.InvalidElementId;
+        }
+
+        /// <summary>Пробует выставить стиль текста заголовка вида "Спецификация по умолчанию".</summary>
+        /// <summary>Задаёт шрифт (стиль текста) для всей таблицы спецификации. Если задано имя,
+        /// ищет подходящий TextNoteType; иначе берёт «Спецификация по умолчанию».
+        /// TitleTextTypeId отвечает за текст в шапке (наш перенесённый Excel-блок),
+        /// BodyTextTypeId/HeaderTextTypeId — за тело и заголовки колонок.</summary>
+        private static void ApplyTableTextType(ViewSchedule sched, string fontName)
+        {
+            try
+            {
+                var doc = sched.Document;
+                var types = new FilteredElementCollector(doc)
+                    .OfClass(typeof(TextNoteType))
+                    .Cast<TextNoteType>()
+                    .Where(x => x.Name != null)
+                    .ToList();
+                if (types.Count == 0) return;
+
+                TextNoteType tt = null;
+                if (!string.IsNullOrWhiteSpace(fontName))
+                    tt = types.FirstOrDefault(x => string.Equals(x.Name, fontName, StringComparison.OrdinalIgnoreCase))
+                      ?? types.FirstOrDefault(x => x.Name.IndexOf(fontName, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (tt == null)
+                    tt = types.FirstOrDefault(x => x.Name.IndexOf("Спецификация по умолчанию", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (tt == null) return;
+
+                try { sched.TitleTextTypeId = tt.Id; } catch { }
+                try { sched.BodyTextTypeId = tt.Id; } catch { }
+                try { sched.HeaderTextTypeId = tt.Id; } catch { }
+                GrdLog.Log("ApplyTableTextType: " + tt.Name);
+            }
+            catch (Exception ex) { GrdLog.Log("ApplyTableTextType: " + ex.Message); }
+        }
+
+        /// <summary>Ставим ширину колонок шапки по максимальной длине текста в каждой колонке Excel.</summary>
+        private static void ApplyExcelHeaderWidthsFromData(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                var td = sched.GetTableData();
+                if (td == null) return;
+                var header = td.GetSectionData(SectionType.Header);
+                if (header == null) return;
+                int cols = table.ColumnCount;
+                for (int c = 0; c < cols; c++)
+                {
+                    int maxLen = 0;
+                    if (table.Headers != null && c < table.Headers.Count)
+                        maxLen = (table.Headers[c] ?? string.Empty).Length;
+                    foreach (var r in table.Rows)
+                    {
+                        if (r == null || c >= r.Length) continue;
+                        int l = (r[c] ?? string.Empty).Length;
+                        if (l > maxLen) maxLen = l;
+                    }
+                    double wFt = Math.Max(50.0, Math.Min(600.0, maxLen * 2.2 + 18.0)) / 304.8;
+                    try { header.SetColumnWidth(header.FirstColumnNumber + c, wFt); } catch { }
+                    try { header.SetColumnWidth(header.LastColumnNumber - (cols - 1 - c), wFt); } catch { }
+                }
+            }
+            catch (Exception ex) { GrdLog.Log("ApplyExcelHeaderWidthsFromData: " + ex.Message); }
+        }
+
+        private static void ApplyExcelAssemblyFilters(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                var def = sched.Definition;
+                if (def == null) return;
+                try { def.ClearFilters(); } catch { }
+                ScheduleField field = null;
+                var bp = new ElementId(BuiltInParameter.SHEET_ASSEMBLY_ASSEMBLY_CODE);
+                foreach (var fid in def.GetFieldOrder())
+                {
+                    try
+                    {
+                        var f = def.GetField(fid);
+                        if (f.ParameterId == bp) { field = f; break; }
+                        if (f.ColumnHeading != null && f.ColumnHeading.IndexOf("Assembly Code", StringComparison.OrdinalIgnoreCase) >= 0)
+                        { field = f; break; }
+                    }
+                    catch { }
+                }
+                if (field == null) return;
+                if (!def.CanFilter()) return;
+                try
+                {
+                    def.AddFilter(new ScheduleFilter(field.FieldId, ScheduleFilterType.Equal, "NO VALUES FOUND"));
+                }
+                catch (Exception ex) { GrdLog.Log("ApplyExcelAssemblyFilters: nvf: " + ex.Message); }
+                try
+                {
+                    def.AddFilter(new ScheduleFilter(field.FieldId, ScheduleFilterType.Equal, "ALL VALUES FOUND"));
+                }
+                catch (Exception ex) { GrdLog.Log("ApplyExcelAssemblyFilters: avf: " + ex.Message); }
+            }
+            catch (Exception ex) { GrdLog.Log("ApplyExcelAssemblyFilters: " + ex.Message); }
+        }
+
+        /// <summary>Синхронизирует КОЛИЧЕСТВО ПОЛЕЙ определения спецификации с числом колонок Excel.
+        /// Именно поля Definition (а не колонки шапки) определяют, что видно при размещении на листе.
+        /// Добавляет недостающие поля по одному (как команда "Добавить колонку" с ленты),
+        /// задаёт ColumnHeading из заголовка Excel и ширины колонок.</summary>
+        /// <summary>Доводит число колонок секции Header (шапка/title) до числа колонок Excel,
+        /// добавляя колонки напрямую (как кнопка "Добавить колонку" с контекстной ленты).
+        /// Тело спецификации НЕ трогаем — там остаётся только колонка Assembly Code.</summary>
+        private static void EnsureAllHeaderColumnsVisible(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                var td = sched.GetTableData();
+                if (td == null) { GrdLog.Log("EnsureHeaderCols: td null"); return; }
+                var header = td.GetSectionData(SectionType.Header);
+                if (header == null) { GrdLog.Log("EnsureHeaderCols: Header null"); return; }
+                int want = table.ColumnCount;
+                if (want <= 0) return;
+
+                int have = header.NumberOfColumns;
+                int added = 0;
+                while (header.NumberOfColumns < want && added < 100)
+                {
+                    int idx = header.LastColumnNumber;
+                    try
+                    {
+                        if (!header.CanInsertColumn(idx)) { GrdLog.Log("EnsureHeaderCols: CanInsertColumn false at " + idx); break; }
+                        header.InsertColumn(idx);
+                        added++;
+                    }
+                    catch (Exception ex) { GrdLog.Log("EnsureHeaderCols: InsertColumn " + idx + ": " + ex.Message); break; }
+                }
+                GrdLog.Log("EnsureHeaderCols: have=" + have + " added=" + added + " now=" + header.NumberOfColumns + " want=" + want);
+            }
+            catch (Exception ex) { GrdLog.Log("EnsureHeaderCols EX: " + ex.ToString()); }
+        }
+
+        /// <summary>Задаёт ширины колонок шапки. Если в таблице заданы ширины в мм (из превью) —
+        /// использует их, иначе подбирает по длине текста.</summary>
+        private static void ApplyColumnWidthsByGrid(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                var td = sched.GetTableData();
+                var header = td?.GetSectionData(SectionType.Header);
+                if (header == null) return;
+                int cols = table.ColumnCount;
+                try { if (header.NumberOfColumns < cols) cols = header.NumberOfColumns; } catch { }
+                bool hasMm = table.ColumnWidthsMm != null && table.ColumnWidthsMm.Count > 0;
+                for (int c = 0; c < cols; c++)
+                {
+                    double widthMm;
+                    if (hasMm && c < table.ColumnWidthsMm.Count)
+                    {
+                        widthMm = table.ColumnWidthsMm[c];
+                    }
+                    else
+                    {
+                        int maxLen = 0;
+                        if (table.Headers != null && c < table.Headers.Count)
+                            maxLen = (table.Headers[c] ?? string.Empty).Length;
+                        foreach (var r in table.Rows)
+                        {
+                            if (r == null || c >= r.Length) continue;
+                            int l = (r[c] ?? string.Empty).Length;
+                            if (l > maxLen) maxLen = l;
+                        }
+                        widthMm = Math.Max(15.0, Math.Min(400.0, maxLen * 2.4 + 6.0));
+                    }
+                    double wFt = Math.Max(15.0, Math.Min(400.0, widthMm)) / 304.8;
+                    try { header.SetColumnWidth(c, wFt); } catch { }
+                    try { header.SetColumnWidth(header.FirstColumnNumber + c, wFt); } catch { }
+                    try
+                    {
+                        var fields = sched.Definition.GetFieldOrder();
+                        if (c < fields.Count)
+                        {
+                            var f = sched.Definition.GetField(fields[c]);
+                            try { f.GridColumnWidth = wFt; } catch { }
+                            try { f.SheetColumnWidth = wFt; } catch { }
+                        }
+                    }
+                    catch { }
+                }
+                GrdLog.Log("ApplyColumnWidthsByGrid: n=" + header.NumberOfColumns + " mm=" + hasMm);
+            }
+            catch (Exception ex) { GrdLog.Log("ApplyColumnWidthsByGrid: " + ex.Message); }
+        }
+
+        /// <summary>Задаёт высоту всех строк шапки (перенесённый Excel-блок) в миллиметрах.
+        /// Высота в TableSectionData — в футах; SetRowHeight запрещён только для тела.</summary>
+        private static void ApplyRowHeightByTable(ViewSchedule sched, ExcelTable table)
+        {
+            try
+            {
+                if (table == null || table.RowHeightMm <= 0) return;
+                var td = sched.GetTableData();
+                if (td == null) return;
+                var header = td.GetSectionData(SectionType.Header);
+                if (header == null) return;
+
+                double hFt = Math.Max(1.0, Math.Min(400.0, table.RowHeightMm)) / 304.8;
+                int rows = header.NumberOfRows;
+                for (int r = 0; r < rows; r++)
+                {
+                    try { header.SetRowHeight(r, hFt); } catch { }
+                    try { header.SetRowHeight(header.FirstRowNumber + r, hFt); } catch { }
+                }
+                GrdLog.Log("ApplyRowHeightByTable: mm=" + table.RowHeightMm + " rows=" + rows);
+            }
+            catch (Exception ex) { GrdLog.Log("ApplyRowHeightByTable: " + ex.Message); }
+        }
+
+        private static void OpenScheduleView(Document doc, ElementId id)
+        {
+            try
+            {
+                var ui = RevitContext.UiApp;
+                var uidoc = ui?.ActiveUIDocument;
+                if (uidoc == null) return;
+                var v = doc.GetElement(id) as View;
+                if (v != null) uidoc.ActiveView = v;
+            }
+            catch { }
+        }
+
+        /// <summary>Читает список спецификаций, размещённых на листах.</summary>
         private static ScheduleSnapshotResult ReadList(UIApplication app)
         {
             var res = new ScheduleSnapshotResult();

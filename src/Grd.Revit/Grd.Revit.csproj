@@ -68,6 +68,12 @@
     <EmbeddedResource Include="Resources\insulation32.png" />
     <EmbeddedResource Include="Resources\systemtypes16.png" />
     <EmbeddedResource Include="Resources\systemtypes32.png" />
+    <EmbeddedResource Include="Resources\pdfprint16.png" />
+    <EmbeddedResource Include="Resources\pdfprint32.png" />
+    <EmbeddedResource Include="Resources\countlength16.png" />
+    <EmbeddedResource Include="Resources\countlength32.png" />
+    <EmbeddedResource Include="Resources\excelimport16.png" />
+    <EmbeddedResource Include="Resources\excelimport32.png" />
   </ItemGroup>
 
   <!-- Revit 2024 API (net48, совместим с Revit 2020-2024) -->
@@ -96,6 +102,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <PackageReference Include="WPF-UI" Version="2.1.0" />
   </ItemGroup>
 
 </Project>

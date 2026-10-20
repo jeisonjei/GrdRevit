@@ -81,7 +81,7 @@ function New-VersionDir([string]$version, [string]$tfm) {
     Copy-Item (Join-Path $src 'GrdRevit.dll')          $verDir -Force
     Copy-Item (Join-Path $src 'GrdRevit.Core.dll')     $verDir -Force
     # net48 flavour shares System.Text.Json dependencies in the same folder
-    Get-ChildItem $src | Where-Object { $_.Name -match 'System\.Text\.Json|System\.Memory|System\.Buffers|Microsoft\.Bcl|System\.Runtime\.CompilerServices' } |
+    Get-ChildItem $src | Where-Object { $_.Name -match 'System\.Text\.Json|System\.Memory|System\.Buffers|Microsoft\.Bcl|System\.Runtime\.CompilerServices|DocumentFormat\.OpenXml|System\.IO\.Packaging|Wpf\.Ui' } |
         Copy-Item -Destination $verDir -Force
 
     $manifestName = "$version.addin"

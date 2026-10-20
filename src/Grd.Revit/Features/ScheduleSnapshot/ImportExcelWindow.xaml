@@ -1,0 +1,131 @@
+<Window x:Class="GrdRevit.Ui.ImportExcelWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="Импорт таблицы из Excel"
+        Width="980" Height="700" MinWidth="700" MinHeight="500"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ControlsDictionary/>
+                <ui:ThemesDictionary Theme="Light"/>
+                <ResourceDictionary Source="/GrdRevit;component/Ui/Themes/Modern.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <RadioButton x:Name="ModeExcel" Content="Импорт из Excel" GroupName="Mode"
+                         IsChecked="True" VerticalAlignment="Center"
+                         Checked="OnModeChanged"/>
+            <RadioButton x:Name="ModeManual" Content="Ручная таблица" GroupName="Mode"
+                         Margin="18,0,0,0" VerticalAlignment="Center"
+                         Checked="OnModeChanged"/>
+            <TextBlock Margin="24,0,0,0" VerticalAlignment="Center"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       Text="Ячейки таблицы можно редактировать прямо здесь."/>
+        </StackPanel>
+
+        <StackPanel x:Name="ExcelPanel" Grid.Row="1" Margin="0,10,0,6">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Выбрать файл…" Padding="14,6" Click="OnBrowse"/>
+                <TextBlock x:Name="FileLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondaryBrush}"
+                           Text="Файл Excel не выбран"/>
+            </StackPanel>
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Лист:" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <ComboBox x:Name="SheetCombo" Grid.Column="1" Width="240" Margin="8,0,0,0"
+                          SelectionChanged="OnSheetChanged"/>
+                <CheckBox x:Name="HeadersCheck" Grid.Column="2" Margin="18,0,0,0"
+                          Content="Первая строка — заголовки"
+                          VerticalAlignment="Center" IsChecked="True" Click="OnOptionChanged"/>
+                <CheckBox x:Name="MergesCheck" Grid.Column="3" Margin="18,0,0,0"
+                          Content="Переносить объединённые ячейки"
+                          VerticalAlignment="Center" IsChecked="True" Click="OnOptionChanged"/>
+                <TextBlock x:Name="RangeLabel" Grid.Column="4" Margin="12,0,0,0" VerticalAlignment="Center"
+                           FontWeight="SemiBold" HorizontalAlignment="Right"
+                           Foreground="{StaticResource TextPrimaryBrush}" Text="диапазон не выбран"/>
+            </Grid>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,4,0,6">
+            <Button Content="+ Строка" Click="OnAddRow" Padding="10,4"
+                    ToolTip="Добавить строку (Insert). Строка вставляется под выделенной, иначе в конец."/>
+            <Button Content="− Строка" Click="OnDeleteRow" Margin="6,0,0,0" Padding="10,4"
+                    ToolTip="Удалить выделенные строки (Ctrl+Delete)."/>
+            <Button Content="+ Колонка" Click="OnAddColumn" Margin="18,0,0,0" Padding="10,4"
+                    ToolTip="Добавить колонку после выделенной."/>
+            <Button Content="− Колонка" Click="OnDeleteColumn" Margin="6,0,0,0" Padding="10,4"
+                    ToolTip="Удалить выделенную колонку."/>
+            <TextBlock VerticalAlignment="Center" Margin="18,0,6,0"
+                       Foreground="{StaticResource TextSecondaryBrush}" Text="Ширина колонки:"/>
+            <TextBox x:Name="ColWidthBox" Width="80" Padding="6,4"
+                     VerticalAlignment="Center" HorizontalContentAlignment="Right"
+                     KeyDown="OnColWidthKeyDown" LostFocus="OnColWidthCommit"
+                     ToolTip="Ширина выбранной колонки в миллиметрах. Введите значение и нажмите Enter. Также можно потянуть границу колонки в шапке таблицы."/>
+            <TextBlock VerticalAlignment="Center" Margin="6,0,0,0"
+                       Foreground="{StaticResource TextSecondaryBrush}" Text="мм"/>
+            <TextBlock VerticalAlignment="Center" Margin="18,0,6,0"
+                       Foreground="{StaticResource TextSecondaryBrush}" Text="Высота каждой строки:"/>
+            <TextBox x:Name="RowHeightBox" Width="80" Padding="6,4"
+                     VerticalAlignment="Center" HorizontalContentAlignment="Right"
+                     KeyDown="OnRowHeightKeyDown" LostFocus="OnRowHeightCommit"
+                     ToolTip="Высота всех строк итоговой таблицы в миллиметрах. Введите значение и нажмите Enter. Пусто — авто."/>
+            <TextBlock VerticalAlignment="Center" Margin="6,0,0,0"
+                       Foreground="{StaticResource TextSecondaryBrush}" Text="мм"/>
+        </StackPanel>
+
+        <DataGrid x:Name="RowsGrid" Grid.Row="3"
+                  AutoGenerateColumns="False" IsReadOnly="False"
+                  SelectionUnit="Cell" SelectionMode="Extended"
+                  CanUserAddRows="False" CanUserDeleteRows="False"
+                  CanUserReorderColumns="False" CanUserSortColumns="False"
+                  CanUserResizeRows="False" CanUserResizeColumns="True"
+                  HeadersVisibility="All" GridLinesVisibility="All"
+                  SelectionChanged="OnSelectionChanged" LoadingRow="OnLoadingRow"
+                  PreviewKeyDown="OnGridKeyDown"/>
+
+        <StackPanel Grid.Row="5" Margin="0,10,0,0">
+            <TextBlock Text="Имя вида (спецификации):" Margin="0,0,0,3" Foreground="{StaticResource TextSecondaryBrush}"/>
+            <TextBox x:Name="NameBox" Padding="6,4" TextChanged="OnTextChanged"/>
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Шрифт таблицы:" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <ComboBox x:Name="FontCombo" Grid.Column="1" Margin="8,0,0,0"
+                          HorizontalAlignment="Left" MinWidth="320"
+                          ToolTip="Стиль текста для всей создаваемой таблицы."/>
+            </Grid>
+        </StackPanel>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="OkButton" Content="Создать" Style="{StaticResource PrimaryButtonStyle}"
+                    Click="OnOk" Padding="20,6" FontWeight="SemiBold" IsDefault="True" IsEnabled="False"/>
+            <Button Content="Отмена" Click="OnCancel" Margin="8,0,0,0" Padding="20,6" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

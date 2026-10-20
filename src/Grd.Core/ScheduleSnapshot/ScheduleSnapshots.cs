@@ -16,6 +16,17 @@ namespace GrdRevit.Core
         public List<string> Headers = new List<string>();
         public List<string[]> Rows = new List<string[]>();
 
+        /// <summary>Номер строки-источника в данных модели для каждой строки таблицы
+        /// (-1 — строка добавлена пользователем). По нему окно отличает изменённые
+        /// ячейки от добавленных строк, даже если строки вставлялись/удалялись.</summary>
+        public List<int> Sources = new List<int>();
+
+        /// <summary>Битовая маска жирных ячеек для каждой строки (бит = номер колонки).</summary>
+        public List<long> Bolds = new List<long>();
+
+        /// <summary>Строка помечена как удалённая (показывается, но не печатается/не выгружается).</summary>
+        public List<bool> Deleted = new List<bool>();
+
         /// <summary>Свободная спецификация: содержимое не берётся из модели, а живёт только здесь.
         /// Заголовки скопированы со спецификации-образца при создании.</summary>
         public bool IsFree;
@@ -126,6 +137,9 @@ namespace GrdRevit.Core
             };
             copy.Headers.AddRange(s.Headers);
             foreach (var row in s.Rows) copy.Rows.Add((string[])row.Clone());
+            copy.Sources.AddRange(s.Sources);
+            copy.Bolds.AddRange(s.Bolds);
+            copy.Deleted.AddRange(s.Deleted);
             return copy;
         }
 
@@ -196,6 +210,20 @@ namespace GrdRevit.Core
                                     }
                                 }
                             }
+                            if (sm.TryGetValue("Sources", out var src) && src is IList<object> srcl)
+                                foreach (var v in srcl)
+                                    sd.Sources.Add(int.TryParse(AsStr(v), NumberStyles.Integer,
+                                        CultureInfo.InvariantCulture, out var sv) ? sv : -1);
+                            if (sm.TryGetValue("Bolds", out var bld) && bld is IList<object> bldl)
+                                foreach (var v in bldl)
+                                {
+                                    long.TryParse(AsStr(v), NumberStyles.Integer,
+                                        CultureInfo.InvariantCulture, out var bv);
+                                    sd.Bolds.Add(bv);
+                                }
+                            if (sm.TryGetValue("Deleted", out var del) && del is IList<object> dell)
+                                foreach (var v in dell)
+                                    sd.Deleted.Add(string.Equals(AsStr(v), "true", StringComparison.OrdinalIgnoreCase));
                             d.Schedules.Add(sd);
                         }
                     }
@@ -248,6 +276,28 @@ namespace GrdRevit.Core
                                 sb.Append(Quote(MiniJson.Encode(row[c] ?? string.Empty)));
                             }
                             sb.Append(']');
+                        }
+                        sb.Append("],\"Sources\":[");
+                        for (int r = 0; r < s.Rows.Count; r++)
+                        {
+                            if (r > 0) sb.Append(',');
+                            sb.Append('"').Append(r < s.Sources.Count
+                                ? s.Sources[r].ToString(CultureInfo.InvariantCulture)
+                                : "-1").Append('"');
+                        }
+                        sb.Append("],\"Bolds\":[");
+                        for (int r = 0; r < s.Rows.Count; r++)
+                        {
+                            if (r > 0) sb.Append(',');
+                            sb.Append('"').Append(r < s.Bolds.Count
+                                ? s.Bolds[r].ToString(CultureInfo.InvariantCulture)
+                                : "0").Append('"');
+                        }
+                        sb.Append("],\"Deleted\":[");
+                        for (int r = 0; r < s.Rows.Count; r++)
+                        {
+                            if (r > 0) sb.Append(',');
+                            sb.Append('"').Append(r < s.Deleted.Count && s.Deleted[r] ? "true" : "false").Append('"');
                         }
                         sb.Append("]}");
                         firstS = false;

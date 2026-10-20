@@ -29,7 +29,8 @@ namespace GrdRevit.Ui
         private static double MmToPt(double mm) => mm * 72.0 / 25.4;
 
         public static void Write(string filePath, string scheduleName, IReadOnlyList<string> headers,
-                                 IReadOnlyList<string[]> rows, double sheetWidthMm, double sheetHeightMm)
+                                 IReadOnlyList<string[]> rows, double sheetWidthMm, double sheetHeightMm,
+                                 IReadOnlyList<long> rowBold = null)
         {
             GdiFontResolver.Install();
             using (var doc = new PdfDocument())
@@ -79,7 +80,7 @@ namespace GrdRevit.Ui
 
                 // Первый проход страниц добавлен в PDF выше; рисуем содержимое.
                 DrawAll(doc, pages, headers, rows, cellLines, rowHeights, widths, colX, lineH,
-                        scheduleName, pageW, pageH, availW, availH, headerRowH);
+                        scheduleName, pageW, pageH, availW, availH, headerRowH, rowBold);
                 doc.Save(filePath);
             }
         }
@@ -219,9 +220,10 @@ namespace GrdRevit.Ui
                                     List<List<string>[]> cellLines, double[] rowH, List<double> widths,
                                     double[] colX, double lineH, string scheduleName,
                                     double pageW, double pageH, double availW, double availH,
-                                    double headerRowH)
+                                    double headerRowH, IReadOnlyList<long> rowBold = null)
         {
             var cellFont = new XFont("Arial", CellFont, XFontStyleEx.Regular);
+            var cellBoldFont = new XFont("Arial", CellFont, XFontStyleEx.Bold);
             var headerFont = new XFont("Arial", HeaderFont, XFontStyleEx.Bold);
             var titleFont = new XFont("Arial", TitleFont, XFontStyleEx.Bold);
             var footerFont = new XFont("Arial", FooterFont, XFontStyleEx.Regular);
@@ -273,10 +275,13 @@ namespace GrdRevit.Ui
                     {
                         var lines = cellLines[r][c];
                         double ty = y + PadTop;
+                        bool bold = rowBold != null && r < rowBold.Count && c < 62 &&
+                                    (rowBold[r] & (1L << c)) != 0L;
+                        var font = bold ? cellBoldFont : cellFont;
                         foreach (var line in lines)
                         {
                             var rect = new XRect(colX[c] + PadX, ty, widths[c] - 2 * PadX, lineH);
-                            gfx.DrawString(line, cellFont, new XSolidBrush(XColor.FromArgb(255, 40, 48, 64)),
+                            gfx.DrawString(line, font, new XSolidBrush(XColor.FromArgb(255, 40, 48, 64)),
                                            rect, alignLeft);
                             ty += lineH;
                         }

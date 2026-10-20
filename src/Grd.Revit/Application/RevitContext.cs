@@ -141,6 +141,11 @@ namespace GrdRevit
         private static Autodesk.Revit.UI.ExternalEvent _dwgExportEvent;
         public static Autodesk.Revit.UI.ExternalEvent DwgExportEvent => _dwgExportEvent;
 
+        /// <summary>Маршалит запись значений колонки спецификации в параметр (окно «Count/Length»).</summary>
+        public static Revit.CopyScheduleCountLengthHandler CopyScheduleCountLengthHandler;
+        private static Autodesk.Revit.UI.ExternalEvent _copyScheduleCountLengthEvent;
+        public static Autodesk.Revit.UI.ExternalEvent CopyScheduleCountLengthEvent => _copyScheduleCountLengthEvent;
+
         /// <summary>
         /// Создаёт ExternalEvent-обработчики. Допустимо ТОЛЬКО в контексте стандартного
         /// API-выполнения (внешняя команда/событие/старт) — из кнопки моделесс-окна
@@ -243,6 +248,12 @@ namespace GrdRevit
                 DwgExportHandler = new Revit.DwgExportHandler();
                 _dwgExportEvent = Autodesk.Revit.UI.ExternalEvent.Create(DwgExportHandler);
                 GrdLog.Log("EnsureHandlers: DwgExportEvent created");
+            }
+            if (_copyScheduleCountLengthEvent == null)
+            {
+                CopyScheduleCountLengthHandler = new Revit.CopyScheduleCountLengthHandler();
+                _copyScheduleCountLengthEvent = Autodesk.Revit.UI.ExternalEvent.Create(CopyScheduleCountLengthHandler);
+                GrdLog.Log("EnsureHandlers: CopyScheduleCountLengthEvent created");
             }
         }
 

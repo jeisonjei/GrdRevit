@@ -6,7 +6,7 @@ using Autodesk.Revit.UI;
 
 namespace GrdRevit
 {
-    public class GrdApplication : IExternalApplication
+    public partial class GrdApplication : IExternalApplication
     {
         public const string ProductName = "JTOOLS";
         // Вкладка и панель ленты: короткие подписи; полное название — на кнопке и в окне.
@@ -21,6 +21,7 @@ namespace GrdRevit
         private const string CopyParamsButtonName = "GrdRevit.CopyParams";
         private const string ScheduleExportButtonName = "GrdRevit.ScheduleExport";
         private const string ScheduleSnapshotButtonName = "GrdRevit.ScheduleSnapshot";
+        private const string ImportExcelButtonName = "GrdRevit.ImportExcel";
         private const string PdfPrintButtonName = "GrdRevit.PdfPrint";
         private const string SettingsButtonName = "GrdRevit.Settings";
         private const string ViewsManagerButtonName = "GrdRevit.ViewsManager";
@@ -38,6 +39,7 @@ namespace GrdRevit
             GrdLog.Log("OnStartup: begin");
             try
             {
+                ResolvePluginAssemblies();
                 app.CreateRibbonTab(TabName);
 
                 var panel = app.CreateRibbonPanel(TabName, PanelName);
@@ -205,6 +207,24 @@ namespace GrdRevit
 
                 panel.AddItem(snapData);
 
+                var importExcelData = new PushButtonData(
+                    ImportExcelButtonName,
+                    "Импорт\nиз Excel",
+                    Assembly.GetExecutingAssembly().Location,
+                    typeof(GrdImportExcelCommand).FullName)
+                {
+                    ToolTip = "Создать спецификацию из таблицы Excel: выбор листа и диапазона, перенос таблицы в шапку спецификации",
+                    LongDescription = "Открывает окно выбора книги Excel: лист, выделение диапазона мышью " +
+                                      "(весь заполненный диапазон выделяется сразу), имя вида (спецификации), номер и имя листа. " +
+                                      "Выбранная таблица переносится в шапку новой спецификации Revit как текст, включая " +
+                                      "заголовки, добавленные строки и объединённые ячейки; спецификация размещается на новом листе со штампом."
+                };
+                importExcelData.Image = LoadIcon("GrdRevit.Resources.excelimport16.png");
+                importExcelData.LargeImage = LoadIcon("GrdRevit.Resources.excelimport32.png");
+                importExcelData.AvailabilityClassName = typeof(GrdAvailability).FullName;
+
+                panel.AddItem(importExcelData);
+
                 var pdfPrintData = new PushButtonData(
                     PdfPrintButtonName,
                     "Печать\nв PDF",
@@ -216,8 +236,8 @@ namespace GrdRevit
                                       "Отмеченные листы сохраняются в один PDF-файл; размер страницы берётся из каждого листа. " +
                                       "Векторный вывод компактнее, растровый — надёжно передаёт знак «Ø», если векторное ядро его искажает."
                 };
-                pdfPrintData.Image = LoadIcon("GrdRevit.Resources.schedulesnap16.png");
-                pdfPrintData.LargeImage = LoadIcon("GrdRevit.Resources.schedulesnap32.png");
+                pdfPrintData.Image = LoadIcon("GrdRevit.Resources.pdfprint16.png");
+                pdfPrintData.LargeImage = LoadIcon("GrdRevit.Resources.pdfprint32.png");
                 pdfPrintData.AvailabilityClassName = typeof(GrdAvailability).FullName;
 
                 panel.AddItem(pdfPrintData);
@@ -381,6 +401,8 @@ namespace GrdRevit
 
                 panel.AddItem(settingsData);
 
+                CreateCopyScheduleCountLengthButton(panel);
+
                 GrdLog.Log("OnStartup: done");
                 return Result.Succeeded;
             }
@@ -390,6 +412,35 @@ namespace GrdRevit
                 TaskDialog.Show(ProductName + ": ошибка запуска", ex.Message);
                 return Result.Failed;
             }
+        }
+
+        private static bool _resolverHooked;
+
+        /// <summary>Подключает загрузку зависимых сборок (например, Wpf.Ui.dll) из папки
+        /// плагина. Revit не включает директорию аддина в probing path для зависимостей,
+        /// из-за чего BAML/типы сторонних сборок не находятся при первом обращении.</summary>
+        private static void ResolvePluginAssemblies()
+        {
+            if (_resolverHooked) return;
+            _resolverHooked = true;
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
+                {
+                    try
+                    {
+                        var simple = new AssemblyName(e.Name).Name;
+                        var path = System.IO.Path.Combine(dir, simple + ".dll");
+                        if (System.IO.File.Exists(path))
+                            return Assembly.LoadFrom(path);
+                    }
+                    catch (Exception ex) { GrdLog.Log("AssemblyResolve: " + ex.Message); }
+                    return null;
+                };
+                GrdLog.Log("ResolvePluginAssemblies: hooked, dir=" + dir);
+            }
+            catch (Exception ex) { GrdLog.Log("ResolvePluginAssemblies: EXCEPTION " + ex.Message); }
         }
 
         /// <summary>Значок кнопки из встроенного ресурса сборки (PNG).</summary>
